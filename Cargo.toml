@@ -1,0 +1,24 @@
+[package]
+name = "bevy_mod_bvh"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = { version = "0.10" }
+bvh = { git = "https://github.com/svenstaro/bvh", rev = "c2f07b883df87dd0fd75762a931f451bfc004f83" }
+rand = "0.8"
+rand_distr = "0.4"
+
+[dev-dependencies]
+bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera" }
+
+# Enable optimization in debug mode
+[profile.dev]
+opt-level = 3
+debug = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
