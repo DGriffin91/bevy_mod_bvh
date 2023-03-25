@@ -13,7 +13,8 @@ use bvh::bvh::BVH;
 pub struct BVHPlugin;
 impl Plugin for BVHPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(MultiTLAS::default())
+        app.insert_resource(DynamicTLASData::default())
+            .insert_resource(StaticTLASData::default())
             .insert_resource(BLAS::default())
             .add_systems((check_tlas_need_update, build_blas, update_tlas).chain());
     }
@@ -72,10 +73,10 @@ pub fn check_tlas_need_update(
             )>,
         ),
     >,
-    mut tlas: ResMut<MultiTLAS>,
+    (mut static_tlas, mut dynamic_tlas): (ResMut<StaticTLASData>, ResMut<DynamicTLASData>),
 ) {
-    tlas.static_tlas.skip_update = static_entities.is_empty();
-    tlas.dynamic_tlas.skip_update = dynamic_entities.is_empty();
+    static_tlas.0.skip_update = static_entities.is_empty();
+    dynamic_tlas.0.skip_update = dynamic_entities.is_empty();
 }
 
 pub fn update_tlas(
@@ -97,9 +98,9 @@ pub fn update_tlas(
         ),
         (With<Handle<Mesh>>, With<DynamicTLAS>),
     >,
-    mut multi_tlas: ResMut<MultiTLAS>,
+    (mut static_tlas, mut dynamic_tlas): (ResMut<StaticTLASData>, ResMut<DynamicTLASData>),
 ) {
-    if !multi_tlas.static_tlas.skip_update {
+    if !static_tlas.0.skip_update {
         let mut static_aabbs = Vec::new();
         for (entity, trans, aabb, visibility) in &static_entities {
             if !visibility.is_visible() {
@@ -108,14 +109,14 @@ pub fn update_tlas(
             static_aabbs.push(TLASAABB::new(entity.clone(), aabb, trans));
         }
         if !static_aabbs.is_empty() {
-            multi_tlas.static_tlas.bvh = Some(BVH::build(&mut static_aabbs));
-            multi_tlas.static_tlas.aabbs = static_aabbs;
+            static_tlas.0.bvh = Some(BVH::build(&mut static_aabbs));
+            static_tlas.0.aabbs = static_aabbs;
         } else {
-            multi_tlas.static_tlas.bvh = None;
-            multi_tlas.static_tlas.aabbs = static_aabbs;
+            static_tlas.0.bvh = None;
+            static_tlas.0.aabbs = static_aabbs;
         }
     }
-    if !multi_tlas.dynamic_tlas.skip_update {
+    if !dynamic_tlas.0.skip_update {
         let mut dynamic_aabbs = Vec::new();
         for (entity, trans, aabb, visibility) in &dynamic_entities {
             if !visibility.is_visible() {
@@ -124,11 +125,11 @@ pub fn update_tlas(
             dynamic_aabbs.push(TLASAABB::new(entity.clone(), aabb, trans));
         }
         if !dynamic_aabbs.is_empty() {
-            multi_tlas.dynamic_tlas.bvh = Some(BVH::build(&mut dynamic_aabbs));
-            multi_tlas.dynamic_tlas.aabbs = dynamic_aabbs;
+            dynamic_tlas.0.bvh = Some(BVH::build(&mut dynamic_aabbs));
+            dynamic_tlas.0.aabbs = dynamic_aabbs;
         } else {
-            multi_tlas.dynamic_tlas.bvh = None;
-            multi_tlas.dynamic_tlas.aabbs = dynamic_aabbs;
+            dynamic_tlas.0.bvh = None;
+            dynamic_tlas.0.aabbs = dynamic_aabbs;
         }
     }
 }
@@ -190,11 +191,12 @@ pub struct TLAS {
 // There isn't a functional difference between the static and dynamic TLAS.
 // Either can be updated. For many scenes most entities are static, this allows them
 // to be partitioned and only update the BVH for the dynamic ones as they move.
+
 #[derive(Default, Resource)]
-pub struct MultiTLAS {
-    pub static_tlas: TLAS,
-    pub dynamic_tlas: TLAS,
-}
+pub struct DynamicTLASData(pub TLAS);
+
+#[derive(Default, Resource)]
+pub struct StaticTLASData(pub TLAS);
 
 #[derive(Debug, Clone)]
 pub struct TLASAABB {

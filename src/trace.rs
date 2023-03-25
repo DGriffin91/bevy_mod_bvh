@@ -3,7 +3,7 @@ use bvh::ray::Ray;
 
 use crate::{
     ray::{intersects_triangle, Intersection},
-    MultiTLAS, Triangle, BLAS, TLAS,
+    Triangle, BLAS, TLAS,
 };
 
 #[derive(Clone)]
@@ -73,7 +73,8 @@ pub fn trace_ray(
     origin: Vec3,
     direction: Vec3,
     entities: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
-    multi_tlas: &MultiTLAS,
+    static_tlas: &TLAS,
+    dynamic_tlas: &TLAS,
     blas: &BLAS,
 ) -> Option<HitResult> {
     //Not handling non-uniform scale correctly
@@ -82,21 +83,9 @@ pub fn trace_ray(
 
     let scene_ray = Ray::new(origin, direction);
 
-    append_closest_entities_hit(
-        &multi_tlas.static_tlas,
-        blas,
-        &scene_ray,
-        &entities,
-        &mut hit_entites,
-    );
+    append_closest_entities_hit(static_tlas, blas, &scene_ray, &entities, &mut hit_entites);
 
-    append_closest_entities_hit(
-        &multi_tlas.dynamic_tlas,
-        blas,
-        &scene_ray,
-        &entities,
-        &mut hit_entites,
-    );
+    append_closest_entities_hit(dynamic_tlas, blas, &scene_ray, &entities, &mut hit_entites);
 
     let mut closest_dist = std::f32::MAX;
 
@@ -120,20 +109,21 @@ pub fn trace_visibility_ray(
     origin: Vec3,
     dest: Vec3,
     entity_bvh: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
-    multi_tlas: &MultiTLAS,
+    static_tlas: &TLAS,
+    dynamic_tlas: &TLAS,
     blas: &BLAS,
 ) -> bool {
     let mut blocked = false;
     let direction = (dest - origin).normalize();
-    let statin_entity_hits = if let Some(scene_bvh) = &multi_tlas.static_tlas.bvh {
+    let statin_entity_hits = if let Some(scene_bvh) = &static_tlas.bvh {
         let scene_ray = Ray::new(origin, direction);
-        scene_bvh.traverse(&scene_ray, &multi_tlas.static_tlas.aabbs)
+        scene_bvh.traverse(&scene_ray, &static_tlas.aabbs)
     } else {
         Vec::new()
     };
-    let dynamic_entity_hits = if let Some(scene_bvh) = &multi_tlas.dynamic_tlas.bvh {
+    let dynamic_entity_hits = if let Some(scene_bvh) = &dynamic_tlas.bvh {
         let scene_ray = Ray::new(origin, direction);
-        scene_bvh.traverse(&scene_ray, &multi_tlas.dynamic_tlas.aabbs)
+        scene_bvh.traverse(&scene_ray, &dynamic_tlas.aabbs)
     } else {
         Vec::new()
     };

@@ -13,7 +13,9 @@ use bevy::{
     window::PresentMode,
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
-use bevy_mod_bvh::{trace::trace_ray, BVHPlugin, DynamicTLAS, MultiTLAS, StaticTLAS, BLAS};
+use bevy_mod_bvh::{
+    trace::trace_ray, BVHPlugin, DynamicTLAS, DynamicTLASData, StaticTLAS, StaticTLASData, BLAS,
+};
 
 #[derive(Component)]
 pub struct TestTrace {
@@ -84,7 +86,7 @@ pub fn camera_trace_depth(
     entity_bvh: Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut TestTrace)>,
     mut images: ResMut<Assets<Image>>,
-    multi_tlas: Res<MultiTLAS>,
+    (static_tlas, dynamic_tlas): (Res<StaticTLASData>, Res<DynamicTLASData>),
     blas: Res<BLAS>,
     mut materials: ResMut<Assets<CustomMaterial>>,
 ) {
@@ -102,7 +104,14 @@ pub fn camera_trace_depth(
                     let ws_eye =
                         (inverse_view_proj.project_point3(vec3(x, -y, 1.0)) - origin).normalize();
 
-                    if let Some(hit) = trace_ray(origin, ws_eye, &entity_bvh, &multi_tlas, &blas) {
+                    if let Some(hit) = trace_ray(
+                        origin,
+                        ws_eye,
+                        &entity_bvh,
+                        &static_tlas.0,
+                        &dynamic_tlas.0,
+                        &blas,
+                    ) {
                         let hit_dist = hit.hitp.distance(origin);
                         if hit.intersection.backface || hit_dist < 0.0001 {
                             // Hit backface
