@@ -10,6 +10,9 @@ bevy = { version = "0.10" }
 bvh = { git = "https://github.com/svenstaro/bvh", rev = "c2f07b883df87dd0fd75762a931f451bfc004f83" }
 rand = "0.8"
 rand_distr = "0.4"
+bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools" }
+bytemuck = "1.7"
+num-integer = "0.1"
 
 [dev-dependencies]
 bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera" }

@@ -1,3 +1,4 @@
+pub mod gpu_data;
 pub mod ray;
 pub mod trace;
 
@@ -5,42 +6,51 @@ use bevy::math::vec3a;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, VertexAttributeValues};
 use bevy::render::primitives::Aabb;
-use bevy::utils::{HashMap, Instant};
+use bevy::utils::HashMap;
 use bvh::aabb::{Bounded, AABB};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::BVH;
 
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+enum BVHSet {
+    BlasTlas,
+    GpuData,
+}
+
 pub struct BVHPlugin;
 impl Plugin for BVHPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(DynamicTLASData::default())
+        app.insert_resource(TLASUpdateSkip::default())
+            .insert_resource(DynamicTLASData::default())
             .insert_resource(StaticTLASData::default())
             .insert_resource(BLAS::default())
-            .add_systems((check_tlas_need_update, build_blas, update_tlas).chain());
+            .add_systems(
+                (check_tlas_need_update, build_blas, update_tlas)
+                    .chain()
+                    .in_set(BVHSet::BlasTlas),
+            );
     }
 }
 
 pub fn build_blas(
-    entities: Query<&Handle<Mesh>>,
+    mut mesh_events: EventReader<AssetEvent<Mesh>>,
     meshes: Res<Assets<Mesh>>,
     mut blas: ResMut<BLAS>,
 ) {
-    // TODO remove items from BLAS when they are no longer needed
-    let now = Instant::now();
-    let mut count = 0;
-    // Build BVHs as needed
-    for mesh_h in entities.iter() {
-        if blas.0.get(mesh_h).is_none() {
-            if let Some(mesh) = meshes.get(mesh_h) {
-                if let Some(bvh) = MeshBVHItem::new(mesh) {
-                    blas.0.insert(mesh_h.clone(), bvh);
-                    count += 1;
+    for event in mesh_events.iter() {
+        match event {
+            AssetEvent::Created { handle } | AssetEvent::Modified { handle } => {
+                if let Some(bvh) = MeshBVHItem::new(meshes.get(handle).unwrap()) {
+                    blas.0.insert(handle.clone(), bvh);
                 }
+            }
+            AssetEvent::Removed { handle } => {
+                let _ = blas.0.remove(handle);
             }
         }
     }
-    if count > 0 {
-        println!("Time to build {count} BVHs {}", now.elapsed().as_secs_f32());
+    if mesh_events.is_empty() {
+        return;
     }
 }
 
@@ -73,10 +83,10 @@ pub fn check_tlas_need_update(
             )>,
         ),
     >,
-    (mut static_tlas, mut dynamic_tlas): (ResMut<StaticTLASData>, ResMut<DynamicTLASData>),
+    mut update: ResMut<TLASUpdateSkip>,
 ) {
-    static_tlas.0.skip_update = static_entities.is_empty();
-    dynamic_tlas.0.skip_update = dynamic_entities.is_empty();
+    update.0 .0 = static_entities.is_empty();
+    update.0 .1 = dynamic_entities.is_empty();
 }
 
 pub fn update_tlas(
@@ -99,8 +109,9 @@ pub fn update_tlas(
         (With<Handle<Mesh>>, With<DynamicTLAS>),
     >,
     (mut static_tlas, mut dynamic_tlas): (ResMut<StaticTLASData>, ResMut<DynamicTLASData>),
+    update: Res<TLASUpdateSkip>,
 ) {
-    if !static_tlas.0.skip_update {
+    if !update.0 .0 {
         let mut static_aabbs = Vec::new();
         for (entity, trans, aabb, visibility) in &static_entities {
             if !visibility.is_visible() {
@@ -116,7 +127,7 @@ pub fn update_tlas(
             static_tlas.0.aabbs = static_aabbs;
         }
     }
-    if !dynamic_tlas.0.skip_update {
+    if !update.0 .1 {
         let mut dynamic_aabbs = Vec::new();
         for (entity, trans, aabb, visibility) in &dynamic_entities {
             if !visibility.is_visible() {
@@ -197,6 +208,9 @@ pub struct DynamicTLASData(pub TLAS);
 
 #[derive(Default, Resource)]
 pub struct StaticTLASData(pub TLAS);
+
+#[derive(Default, Resource)]
+pub struct TLASUpdateSkip(pub (bool, bool));
 
 #[derive(Debug, Clone)]
 pub struct TLASAABB {
