@@ -20,9 +20,9 @@ var gpu_static_tlas_data: texture_2d<f32>;
 @group(0) @binding(5)
 var gpu_dynamic_tlas_data: texture_2d<f32>;
 @group(0) @binding(6)
-var mesh_data: texture_2d<u32>;
+var mesh_data: texture_2d<i32>;
 @group(0) @binding(7)
-var vert_indices: texture_2d<u32>;
+var vert_indices: texture_2d<i32>;
 @group(0) @binding(8)
 var vert_pos_nor: texture_2d<f32>;
 @group(0) @binding(9)
@@ -82,5 +82,4 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     col = print_value(coord, col, 1, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
 
     return col;
-
 }

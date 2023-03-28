@@ -12,7 +12,7 @@ fn get_vert_normal(idx: i32) -> vec3<f32> {
 
 fn get_vert_index(idx: i32) -> i32 {
     let dimension = textureDimensions(vert_indices).x;
-    return i32(textureLoad(vert_indices, vec2<i32>(idx % dimension, idx / dimension), 0).x);
+    return textureLoad(vert_indices, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
 fn get_tlas_max_length(tlas_tex: texture_2d<f32>) -> i32 {
@@ -42,10 +42,10 @@ fn get_instance_emit(instance_tex: texture_2d<f32>, idx: i32) -> vec4<f32> {
     return textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0);
 }
 
-fn get_instance_mesh_data_idx(instance_tex: texture_2d<f32>, idx: i32) -> u32 {
+fn get_instance_mesh_data_idx(instance_tex: texture_2d<f32>, idx: i32) -> i32 {
     let idx = idx * 7 + 2;
     let dimension = textureDimensions(instance_tex).x;
-    return bitcast<u32>(textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x);
+    return bitcast<i32>(textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x);
 }
 
 fn get_instance_model(instance_tex: texture_2d<f32>, idx: i32) -> mat4x4<f32> {
@@ -59,25 +59,25 @@ fn get_instance_model(instance_tex: texture_2d<f32>, idx: i32) -> mat4x4<f32> {
     );
 }
 
-fn mesh_index_start(idx: i32) -> u32 {
+fn mesh_index_start(idx: i32) -> i32 {
     let idx = idx * 4 + 0;
     let dimension = textureDimensions(mesh_data).x;
     return textureLoad(mesh_data, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
-fn mesh_pos_start(idx: i32) -> u32 {
+fn mesh_pos_start(idx: i32) -> i32 {
     let idx = idx * 4 + 1;
     let dimension = textureDimensions(mesh_data).x;
     return textureLoad(mesh_data, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
-fn mesh_blas_start(idx: i32) -> u32 {
+fn mesh_blas_start(idx: i32) -> i32 {
     let idx = idx * 4 + 2;
     let dimension = textureDimensions(mesh_data).x;
     return textureLoad(mesh_data, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
-fn mesh_blas_count(idx: i32) -> u32 {
+fn mesh_blas_count(idx: i32) -> i32 {
     let idx = idx * 4 + 3;
     let dimension = textureDimensions(mesh_data).x;
     return textureLoad(mesh_data, vec2<i32>(idx % dimension, idx / dimension), 0).x;
@@ -174,10 +174,10 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
 }
 
 fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
-    let blas_start = i32(mesh_blas_start(mesh_idx));
-    let blas_count = i32(mesh_blas_count(mesh_idx));
-    let mesh_index_start = i32(mesh_index_start(mesh_idx));
-    let mesh_pos_start = i32(mesh_pos_start(mesh_idx));
+    let blas_start = mesh_blas_start(mesh_idx);
+    let blas_count = mesh_blas_count(mesh_idx);
+    let mesh_index_start = mesh_index_start(mesh_idx);
+    let mesh_pos_start = mesh_pos_start(mesh_idx);
 
     var next_idx = 0;
     var min_dist = F32_MAX;
@@ -239,7 +239,7 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
             // Look up the equivalent info as: static_tlas.0.aabbs[shape_index].entity
             let instance_idx = (entry_idx + 1) * -1;
 
-            let mesh_idx = i32(get_instance_mesh_data_idx(instance_tex, instance_idx));
+            let mesh_idx = get_instance_mesh_data_idx(instance_tex, instance_idx);
 
             let model = get_instance_model(instance_tex, instance_idx);
 
@@ -249,7 +249,7 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
             local_ray.direction = normalize((model * vec4(ray.direction, 0.0)).xyz);
             local_ray.inv_direction = 1.0 / local_ray.direction;
 
-            var new_hit = traverse_blas(local_ray, i32(mesh_idx));
+            var new_hit = traverse_blas(local_ray, mesh_idx);
 
             if new_hit.distance < hit.distance {
                 hit = new_hit;
@@ -291,9 +291,9 @@ fn scene_query(ray: Ray) -> SceneQuery {
 
 // Inefficient, don't use this if getting more than normal.
 fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
-    let mesh_idx = i32(get_instance_mesh_data_idx(instance_tex, hit.instance_idx));
-    let mesh_index_start = i32(mesh_index_start(mesh_idx));
-    let mesh_pos_start = i32(mesh_pos_start(mesh_idx));
+    let mesh_idx = get_instance_mesh_data_idx(instance_tex, hit.instance_idx);
+    let mesh_index_start = mesh_index_start(mesh_idx);
+    let mesh_pos_start = mesh_pos_start(mesh_idx);
     let model = get_instance_model(instance_tex, hit.instance_idx);
 
     let ind1 = get_vert_index(hit.triangle_idx + 0 + mesh_index_start);

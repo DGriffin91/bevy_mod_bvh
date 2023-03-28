@@ -47,12 +47,14 @@ impl Plugin for GPUDataPlugin {
 #[derive(NoUninit, Clone, Copy)]
 #[repr(C)]
 pub struct MeshData {
-    pub index_start: u32,
-    pub pos_start: u32,
-    pub blas_start: u32,
-    pub blas_count: u32,
+    pub index_start: i32,
+    pub pos_start: i32,
+    pub blas_start: i32,
+    pub blas_count: i32,
 }
 
+// Data is currently all stored as i32 to avoid conversion
+// in hot paths on the GPU. Need to evaluate if this makes sense.
 #[derive(Resource, Clone)]
 pub struct GpuData {
     //-shape_idx * instance_data_len is index into static/dynamic instance data
@@ -73,7 +75,7 @@ pub struct GpuData {
     //-shape_idx * 3 is index into vert_indices
     pub blas: Handle<Image>,
 
-    // all u32
+    // all i32
     // index_start, pos_start, blas_start, blas_count
     pub mesh_data: Handle<Image>,
 
@@ -89,7 +91,7 @@ pub struct GpuData {
             transform/model (probably trans.compute_matrix().inverse())
         }
     */
-    // currently diffuse rgba, emit rgba, u32 index into mesh_data, inv mat: Vec4Vec4Vec4Vec4
+    // currently diffuse rgba, emit rgba, i32 index into mesh_data, inv mat: Vec4Vec4Vec4Vec4
     pub gpu_static_instance_data: Handle<Image>,
     pub gpu_dynamic_instance_data: Handle<Image>,
 }
@@ -101,9 +103,9 @@ fn init_gpu_data(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         gpu_dynamic_tlas_data: images
             .add(f32rgba_image(&[Vec4::ZERO], "uninit_gpu_dynamic_tlas_data")),
         vert_pos_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_positions")),
-        vert_indices: images.add(u32_image(&[0], "uninit_vert_indices")),
+        vert_indices: images.add(i32_image(&[0], "uninit_vert_indices")),
         blas: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_blas")),
-        mesh_data: images.add(u32_image(&[0], "uninit_mesh_data")),
+        mesh_data: images.add(i32_image(&[0], "uninit_mesh_data")),
         mesh_data_reverse_map: HashMap::new(),
         gpu_static_instance_data: images.add(f32rgba_image(
             &[Vec4::ZERO],
@@ -146,7 +148,7 @@ fn update_vertices_indices_blas_data(
             bevy::render::mesh::Indices::U32(a) => a,
         };
         for index in indices {
-            index_data.push(*index);
+            index_data.push(*index as i32);
         }
 
         for (p, n) in mesh_positions(&mesh).zip(mesh_normals(&mesh)) {
@@ -192,17 +194,17 @@ fn update_vertices_indices_blas_data(
         mesh_data_reverse_map.insert(mesh_h.clone(), mesh_data_idx);
 
         mesh_data.push(MeshData {
-            index_start: index_start as u32,
-            pos_start: pos_start as u32,
-            blas_start: blas_start as u32,
-            blas_count: flat_bvh.len() as u32,
+            index_start: index_start as i32,
+            pos_start: pos_start as i32,
+            blas_start: blas_start as i32,
+            blas_count: flat_bvh.len() as i32,
         });
     }
 
-    gpu_data.vert_indices = images.add(u32_image(&index_data, "vert_indices"));
+    gpu_data.vert_indices = images.add(i32_image(&index_data, "vert_indices"));
     gpu_data.vert_pos_nor = images.add(f32rgba_image(&pos_nor_data, "vert_positions_normals"));
     gpu_data.blas = images.add(f32rgba_image(&blas_data, "blas"));
-    gpu_data.mesh_data = images.add(u32_image(&cast_slice(&mesh_data), "mesh_data"));
+    gpu_data.mesh_data = images.add(i32_image(&cast_slice(&mesh_data), "mesh_data"));
     gpu_data.mesh_data_reverse_map = mesh_data_reverse_map;
 }
 
@@ -292,7 +294,7 @@ fn create_instance_data(
         instance_gpu_data.push(cast(material.base_color.as_linear_rgba_f32()));
         instance_gpu_data.push(cast(material.emissive.as_linear_rgba_f32()));
         let mesh_data_idx = gpu_data.mesh_data_reverse_map[mesh_h];
-        instance_gpu_data.push(Vec4::new(cast(mesh_data_idx as u32), 0.0, 0.0, 0.0));
+        instance_gpu_data.push(Vec4::new(cast(mesh_data_idx as i32), 0.0, 0.0, 0.0));
         let inv_mat = trans.compute_matrix().inverse();
         instance_gpu_data.push(inv_mat.x_axis);
         instance_gpu_data.push(inv_mat.y_axis);
@@ -302,8 +304,8 @@ fn create_instance_data(
     f32rgba_image(&instance_gpu_data, label)
 }
 
-pub fn u32_image(u32data: &[u32], label: &'static str) -> Image {
-    let dimension = (u32data.len().sqrt() + 1).next_power_of_two();
+pub fn i32_image(i32data: &[i32], label: &'static str) -> Image {
+    let dimension = (i32data.len().sqrt() + 1).next_power_of_two();
     let mut img = Image {
         //dimension * dimension image with 1 u32 which are 4 bytes
         data: vec![0u8; dimension * dimension * 1 * 4],
@@ -317,13 +319,13 @@ pub fn u32_image(u32data: &[u32], label: &'static str) -> Image {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::R32Uint,
+            format: TextureFormat::R32Sint,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         },
         ..default()
     };
-    let data = cast_slice::<u32, u8>(&u32data).to_vec();
+    let data = cast_slice::<i32, u8>(&i32data).to_vec();
     img.data.splice(0..data.len(), data);
     img
 }
@@ -450,7 +452,7 @@ pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntr
             binding: bindings[2],
             visibility: ShaderStages::FRAGMENT,
             ty: BindingType::Texture {
-                sample_type: TextureSampleType::Uint,
+                sample_type: TextureSampleType::Sint,
                 view_dimension: TextureViewDimension::D2,
                 multisampled: false,
             },
@@ -461,7 +463,7 @@ pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntr
             binding: bindings[3],
             visibility: ShaderStages::FRAGMENT,
             ty: BindingType::Texture {
-                sample_type: TextureSampleType::Uint,
+                sample_type: TextureSampleType::Sint,
                 view_dimension: TextureViewDimension::D2,
                 multisampled: false,
             },
