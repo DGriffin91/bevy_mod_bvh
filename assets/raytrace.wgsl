@@ -10,11 +10,11 @@
 var screen_tex: texture_2d<f32>;
 @group(0) @binding(2)
 var texture_sampler: sampler;
-struct PostProcessSettings {
-    intensity: f32,
+struct TraceSettings {
+    frame: u32,
 }
 @group(0) @binding(3)
-var<uniform> settings: PostProcessSettings;
+var<uniform> settings: TraceSettings;
 @group(0) @binding(4)
 var gpu_static_tlas_data: texture_2d<f32>;
 @group(0) @binding(5)
@@ -54,7 +54,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let coord = in.position.xy;
     let icoord = vec2<i32>(in.position.xy);
     let uv = in.position.xy/view.viewport.zw;
-    let offset_strength = settings.intensity;
+    let frame = settings.frame;
     
     var col = textureSample(screen_tex, texture_sampler, in.uv);
 
@@ -78,8 +78,9 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     col = diffuse * front_light + mist;
 
-    col = print_value(coord, col, 0, f32(get_tlas_max_length(gpu_static_tlas_data)));
-    col = print_value(coord, col, 1, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
+    col = print_value_b(coord, col, 0, f32(frame));
+    col = print_value_b(coord, col, 1, f32(get_tlas_max_length(gpu_static_tlas_data)));
+    col = print_value_b(coord, col, 2, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
 
     return col;
 }

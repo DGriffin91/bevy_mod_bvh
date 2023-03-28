@@ -1,5 +1,7 @@
 use bevy::{
-    core_pipeline::{core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state},
+    core_pipeline::{
+        core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state, fxaa::Fxaa,
+    },
     pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
@@ -46,8 +48,8 @@ fn main() {
 struct PostProcessPlugin;
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(ExtractComponentPlugin::<PostProcessSettings>::default())
-            .add_plugin(UniformComponentPlugin::<PostProcessSettings>::default());
+        app.add_plugin(ExtractComponentPlugin::<TraceSettings>::default())
+            .add_plugin(UniformComponentPlugin::<TraceSettings>::default());
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -71,11 +73,7 @@ impl Plugin for PostProcessPlugin {
             RayTraceNode::IN_VIEW,
         );
 
-        core_3d_graph.add_node_edge(core_3d::graph::node::TONEMAPPING, RayTraceNode::NAME);
-        core_3d_graph.add_node_edge(
-            RayTraceNode::NAME,
-            core_3d::graph::node::END_MAIN_PASS_POST_PROCESSING,
-        );
+        core_3d_graph.add_node_edge(core_3d::graph::node::MAIN_PASS, RayTraceNode::NAME);
     }
 }
 
@@ -127,7 +125,7 @@ impl Node for RayTraceNode {
             return Ok(());
         };
 
-        let settings_uniforms = world.resource::<ComponentUniforms<PostProcessSettings>>();
+        let settings_uniforms = world.resource::<ComponentUniforms<TraceSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
             return Ok(());
         };
@@ -291,8 +289,8 @@ impl FromWorld for PostProcessPipeline {
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
-struct PostProcessSettings {
-    intensity: f32,
+struct TraceSettings {
+    frame: u32,
 }
 
 /// set up a simple 3D scene
@@ -344,7 +342,7 @@ fn setup(
             ..default()
         })
         .insert(CameraController::default())
-        .insert(PostProcessSettings { intensity: 0.02 });
+        .insert(TraceSettings { frame: 0 });
 }
 
 #[derive(Component)]
@@ -357,13 +355,8 @@ fn cube_rotator(time: Res<Time>, mut query: Query<&mut Transform, With<RotateCub
     }
 }
 
-// Change the intensity over time to show that the effect is controlled from the main world
-fn update_settings(mut settings: Query<&mut PostProcessSettings>, time: Res<Time>) {
+fn update_settings(mut settings: Query<&mut TraceSettings>) {
     for mut setting in &mut settings {
-        let mut intensity = time.elapsed_seconds().sin();
-        intensity = intensity.sin();
-        intensity = intensity * 0.5 + 0.5;
-        intensity *= 0.015;
-        setting.intensity = intensity;
+        setting.frame = setting.frame.wrapping_add(1);
     }
 }

@@ -70,3 +70,21 @@ fn print_value(
     );
     return select(color, vec4(1.0), is_fps_digit > 0.0);
 }
+
+fn print_value_b(
+    frag_coord: vec2<f32>,
+    color: vec4<f32>,
+    row: i32,
+    value: f32,
+) -> vec4<f32> {
+    let row_height = 10.0;
+    let is_fps_digit = print_value_custom(
+        frag_coord - vec2(0.0, row_height * f32(row) * 2.0),
+        vec2(row_height),
+        vec2(row_height),
+        value,
+        8.0,
+        3.0
+    );
+    return select(color, vec4(0.0), is_fps_digit > 0.0);
+}
