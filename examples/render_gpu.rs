@@ -1,14 +1,12 @@
 use bevy::{
-    core_pipeline::{
-        clear_color::ClearColorConfig, core_3d,
-        fullscreen_vertex_shader::fullscreen_shader_vertex_state,
-    },
+    core_pipeline::{core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state},
     pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
+        render_asset::RenderAssets,
         render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, SlotInfo, SlotType},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -26,7 +24,10 @@ use bevy::{
     },
 };
 use bevy_basic_camera::CameraController;
-use bevy_mod_bvh::{gpu_data::GPUDataPlugin, BVHPlugin, DynamicTLAS, StaticTLAS};
+use bevy_mod_bvh::{
+    gpu_data::{get_bind_group_layout_entries, get_bindings, GPUDataPlugin, GpuData},
+    BVHPlugin, DynamicTLAS, StaticTLAS,
+};
 
 fn main() {
     App::new()
@@ -111,6 +112,8 @@ impl Node for RayTraceNode {
         let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
         let view_uniforms = world.resource::<ViewUniforms>();
         let view_uniforms = view_uniforms.uniforms.binding().unwrap();
+        let images = world.resource::<RenderAssets<Image>>();
+        let gpu_data = world.resource::<GpuData>();
 
         let Ok((view_uniform_offset, view_target)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
@@ -131,29 +134,37 @@ impl Node for RayTraceNode {
 
         let post_process = view_target.post_process_write();
 
+        let mut entries = vec![
+            BindGroupEntry {
+                binding: 0,
+                resource: view_uniforms.clone(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(post_process.source),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::Sampler(&post_process_pipeline.sampler),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: settings_binding.clone(),
+            },
+        ];
+
+        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11]) else {
+            return Ok(());
+        };
+
+        entries.append(&mut rt_bindings.to_vec());
+
         let bind_group = render_context
             .render_device()
             .create_bind_group(&BindGroupDescriptor {
                 label: Some("post_process_bind_group"),
                 layout: &post_process_pipeline.layout,
-                entries: &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: view_uniforms.clone(),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::TextureView(post_process.source),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::Sampler(&post_process_pipeline.sampler),
-                    },
-                    BindGroupEntry {
-                        binding: 3,
-                        resource: settings_binding.clone(),
-                    },
-                ],
+                entries: &entries,
             });
 
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -196,38 +207,42 @@ impl FromWorld for PostProcessPipeline {
             count: None,
         };
 
+        let mut entries = vec![
+            // View
+            view.clone(),
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: bevy::render::render_resource::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
+
+        entries.append(&mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11]).to_vec());
+
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("post_process_bind_group_layout"),
-            entries: &[
-                // View
-                view.clone(),
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Texture {
-                        sample_type: TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: bevy::render::render_resource::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &entries,
         });
 
         let sampler = render_device.create_sampler(&SamplerDescriptor::default());
@@ -285,7 +300,6 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
 ) {
     // plane
     commands
@@ -304,12 +318,21 @@ fn setup(
             ..default()
         })
         .insert(StaticTLAS);
-    // rotating cube
+    // rotating cubes
     commands
         .spawn(MaterialMeshBundle {
             mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
-            material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-            transform: Transform::from_xyz(0.0, 2.5, 0.0),
+            material: materials.add(Color::rgb(0.1, 0.1, 0.9).into()),
+            transform: Transform::from_xyz(0.0, 1.5, 0.0),
+            ..default()
+        })
+        .insert(DynamicTLAS)
+        .insert(RotateCube);
+    commands
+        .spawn(MaterialMeshBundle {
+            mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
+            material: materials.add(Color::rgb(0.8, 0.1, 0.1).into()),
+            transform: Transform::from_xyz(1.0, 1.5, 0.0),
             ..default()
         })
         .insert(DynamicTLAS)
@@ -320,7 +343,8 @@ fn setup(
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..default()
         })
-        .insert(CameraController::default());
+        .insert(CameraController::default())
+        .insert(PostProcessSettings { intensity: 0.02 });
 }
 
 #[derive(Component)]
