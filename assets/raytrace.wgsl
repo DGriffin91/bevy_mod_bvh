@@ -49,10 +49,6 @@ fn get_screen_ray(uv: vec2<f32>) -> Ray {
 }
 
 
-//--------------------------
-//--------------------------
-//--------------------------
-
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let coord = in.position.xy;
@@ -64,30 +60,21 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     var ray = get_screen_ray(uv);
 
-    let hit_static = traverse_tlas(gpu_static_tlas_data, gpu_static_instance_data, ray);
-    let hit_dynamic = traverse_tlas(gpu_dynamic_tlas_data, gpu_dynamic_instance_data, ray);
-
-    let static_closer = hit_static.distance < hit_dynamic.distance;
-
-    var hit: Hit;
+    var query = scene_query(ray);
 
     var diffuse = vec4(0.0);
+    var normal = vec3(0.0);
 
-    if static_closer {
-        hit = hit_static;
-        diffuse = get_instance_diffuse(gpu_static_instance_data, hit.instance_idx);
+    if query.static_tlas {
+        diffuse = get_instance_diffuse(gpu_static_instance_data, query.hit.instance_idx);
+        normal = get_tri_normal(gpu_static_instance_data, query.hit);
     } else {
-        hit = hit_dynamic;
-        diffuse = get_instance_diffuse(gpu_dynamic_instance_data, hit.instance_idx);
+        diffuse = get_instance_diffuse(gpu_dynamic_instance_data, query.hit.instance_idx);
+        normal = get_tri_normal(gpu_dynamic_instance_data, query.hit);
     }
 
-    if hit.distance == F32_MAX {
-        diffuse = vec4(0.0);
-    }
-
-    let mist = pow(hit.distance * 0.1, 5.0);
-    let front_light = dot(hit.normal, -ray.direction);
-    let color = diffuse;
+    let mist = pow(query.hit.distance * 0.1, 5.0);
+    let front_light = dot(normal, -ray.direction);
 
     col = diffuse * front_light + mist;
 

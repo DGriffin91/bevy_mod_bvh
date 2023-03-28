@@ -94,10 +94,15 @@ struct Ray {
 };
 
 struct Hit {
-    normal: vec3<f32>,
+    uv: vec2<f32>,
     distance: f32,
     instance_idx: i32,
-    backface: bool,
+    triangle_idx: i32,
+};
+
+struct SceneQuery {
+    hit: Hit,
+    static_tlas: bool,
 };
 
 struct Aabb {
@@ -177,7 +182,6 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
     var next_idx = 0;
     var min_dist = F32_MAX;
     var hit: Hit;
-    hit.normal = vec3(0.0, 0.0, 0.0);
     hit.distance = F32_MAX;
     while (next_idx < blas_count) {
         let aabb_min = get_blas_bvh(next_idx * 2 + 0 + blas_start); 
@@ -185,11 +189,11 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
         let entry_idx = bitcast<i32>(aabb_min.w);
         let exit_idx = bitcast<i32>(aabb_max.w);
         if entry_idx < 0 {
-            let shape_idx = (entry_idx + 1) * -3;
+            let triangle_idx = (entry_idx + 1) * -3;
             // If the entry_index is negative, then it's a leaf node.
-            let ind1 = get_vert_index(shape_idx + 0 + mesh_index_start);
-            let ind2 = get_vert_index(shape_idx + 1 + mesh_index_start);
-            let ind3 = get_vert_index(shape_idx + 2 + mesh_index_start);
+            let ind1 = get_vert_index(triangle_idx + 0 + mesh_index_start);
+            let ind2 = get_vert_index(triangle_idx + 1 + mesh_index_start);
+            let ind3 = get_vert_index(triangle_idx + 2 + mesh_index_start);
             let p1 = get_vert_position(ind1 + mesh_pos_start);
             let p2 = get_vert_position(ind2 + mesh_pos_start);
             let p3 = get_vert_position(ind3 + mesh_pos_start);
@@ -197,16 +201,9 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
 
             let intr = intersects_triangle(ray, p1, p2, p3);
             if intr.distance < hit.distance {
-                // vert order is acb?
-                let a = get_vert_normal(ind1 + mesh_pos_start).xyz;
-                let c = get_vert_normal(ind2 + mesh_pos_start).xyz;
-                let b = get_vert_normal(ind3 + mesh_pos_start).xyz;
-                // Barycentric Coordinates
-                let u = intr.uv.x;
-                let v = intr.uv.y;
-                hit.normal = u * a + v * b + (1.0 - u - v) * c;
                 hit.distance = intr.distance;
-                hit.backface = intr.backface;
+                hit.triangle_idx = triangle_idx;
+                hit.uv = intr.uv;
             }
             //min_dist = min(min_dist, intr.distance);
             // Exit the current node.
@@ -230,7 +227,6 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
     var min_dist = F32_MAX;
     var temp_return = vec4(0.0);
     var hit: Hit;
-    hit.normal = vec3(0.0, 0.0, 0.0);
     hit.distance = F32_MAX;
     while (next_idx < get_tlas_max_length(tlas_tex)) {
         let aabb_min = get_tlas_bvh(tlas_tex, next_idx * 2 + 0); 
@@ -258,11 +254,8 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
             if new_hit.distance < hit.distance {
                 hit = new_hit;
                 hit.instance_idx = instance_idx;
-                // transform local space normal into world space
-                hit.normal = normalize(transpose(model) * vec4(new_hit.normal, 0.0)).xyz;
             }
 
-            // TODO lookup mesh BVH from instance and traverse_blas()
             // Exit the current node.
             next_idx = exit_idx;
         } else {
@@ -277,4 +270,48 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
         }
     }
     return hit;
+}
+
+fn scene_query(ray: Ray) -> SceneQuery {
+    let hit_static = traverse_tlas(gpu_static_tlas_data, gpu_static_instance_data, ray);
+    let hit_dynamic = traverse_tlas(gpu_dynamic_tlas_data, gpu_dynamic_instance_data, ray);
+
+    if hit_static.distance < hit_dynamic.distance {
+        var query: SceneQuery;
+        query.hit = hit_static;
+        query.static_tlas = true;
+        return query;
+    } else {
+        var query: SceneQuery;
+        query.hit = hit_dynamic;
+        query.static_tlas = false;
+        return query;
+    }
+}
+
+// Inefficient, don't use this if getting more than normal.
+fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
+    let mesh_idx = i32(get_instance_mesh_data_idx(instance_tex, hit.instance_idx));
+    let mesh_index_start = i32(mesh_index_start(mesh_idx));
+    let mesh_pos_start = i32(mesh_pos_start(mesh_idx));
+    let model = get_instance_model(instance_tex, hit.instance_idx);
+
+    let ind1 = get_vert_index(hit.triangle_idx + 0 + mesh_index_start);
+    let ind2 = get_vert_index(hit.triangle_idx + 1 + mesh_index_start);
+    let ind3 = get_vert_index(hit.triangle_idx + 2 + mesh_index_start);
+    
+    // vert order is acb?
+    let a = get_vert_normal(ind1 + mesh_pos_start).xyz;
+    let c = get_vert_normal(ind2 + mesh_pos_start).xyz;
+    let b = get_vert_normal(ind3 + mesh_pos_start).xyz;
+
+    // Barycentric Coordinates
+    let u = hit.uv.x;
+    let v = hit.uv.y;
+    var normal = u * a + v * b + (1.0 - u - v) * c;
+    
+    // transform local space normal into world space
+    normal = normalize(transpose(model) * vec4(normal, 0.0)).xyz;
+
+    return normal;
 }
