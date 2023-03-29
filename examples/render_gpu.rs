@@ -156,7 +156,7 @@ impl Node for RayTraceNode {
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12]) else {
+        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) else {
             return Ok(());
         };
 
@@ -241,7 +241,9 @@ impl FromWorld for PostProcessPipeline {
             },
         ];
 
-        entries.append(&mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12]).to_vec());
+        entries.append(
+            &mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12, 13]).to_vec(),
+        );
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("post_process_bind_group_layout"),
@@ -360,12 +362,12 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
         ),
         ..default()
     });
-    //commands.spawn(SceneBundle {
-    //    scene: asset_server.load(
-    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
-    //    ),
-    //    ..default()
-    //});
+    commands.spawn(SceneBundle {
+        scene: asset_server.load(
+            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+        ),
+        ..default()
+    });
 }
 
 fn set_sponza_tlas(

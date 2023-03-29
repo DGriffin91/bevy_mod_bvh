@@ -29,10 +29,12 @@ var vert_pos: texture_2d<f32>;
 @group(0) @binding(9)
 var vert_nor: texture_2d<f32>;
 @group(0) @binding(10)
-var blas: texture_2d<f32>;
+var tri_nor: texture_2d<f32>;
 @group(0) @binding(11)
-var gpu_static_instance_data: texture_2d<f32>;
+var blas: texture_2d<f32>;
 @group(0) @binding(12)
+var gpu_static_instance_data: texture_2d<f32>;
+@group(0) @binding(13)
 var gpu_dynamic_instance_data: texture_2d<f32>;
 
 #import "tracing.wgsl"
@@ -71,10 +73,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
         if query.static_tlas {
             diffuse = get_instance_diffuse(gpu_static_instance_data, query.hit.instance_idx);
-            normal = get_tri_normal(gpu_static_instance_data, query.hit);
+            normal = get_surface_normal(gpu_static_instance_data, query.hit);
         } else {
             diffuse = get_instance_diffuse(gpu_dynamic_instance_data, query.hit.instance_idx);
-            normal = get_tri_normal(gpu_dynamic_instance_data, query.hit);
+            normal = get_surface_normal(gpu_dynamic_instance_data, query.hit);
         }
 
 

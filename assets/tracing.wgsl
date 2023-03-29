@@ -1,3 +1,8 @@
+fn get_tri_normal(idx: i32) -> vec4<f32> {
+    let dimension = textureDimensions(tri_nor).x;
+    return textureLoad(tri_nor, vec2<i32>(idx % dimension, idx / dimension), 0);
+}
+
 fn get_vert_position(idx: i32) -> vec3<f32> {
     let dimension = textureDimensions(vert_pos).x;
     return textureLoad(vert_pos, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
@@ -131,6 +136,19 @@ fn intersects_aabb(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> f32 {
     return select(F32_MAX, tmin_n, tmax_n >= tmin_n && tmax_n >= 0.0);
 }
 
+fn intersects_aabb_seg(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> vec2<f32> {
+    let t1 = (minv - ray.origin) * ray.inv_direction;
+    let t2 = (maxv - ray.origin) * ray.inv_direction;
+
+    let tmin = min(t1, t2);
+    let tmax = max(t1, t2);
+
+    let tmin_n = max(tmin.x, max(tmin.y, tmin.z));
+    let tmax_n = min(tmax.x, min(tmax.y, tmax.z));
+
+    return select(vec2(F32_MAX), vec2(tmin_n, tmax_n), tmax_n >= tmin_n && tmax_n >= 0.0);
+}
+
 // A Ray-Box Intersection Algorithm and Efficient Dynamic Voxel Rendering
 // Alexander Majercik, Cyril Crassin, Peter Shirley, and Morgan McGuire
 fn slabs(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> bool {
@@ -141,6 +159,17 @@ fn slabs(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> bool {
     let tmax = max(t0, t1);
 
     return max(tmin.x, max(tmin.y, tmin.z)) <= min(tmax.x, min(tmax.y, tmax.z));
+}
+
+fn intersects_plane(ray: Ray, planePoint: vec3<f32>, planeNormal: vec3<f32>) -> f32 {
+    let denom = dot(ray.direction, planeNormal);
+
+    // Check if ray is parallel to the plane
+    if (abs(denom) < F32_EPSILON) {
+        return F32_MAX;
+    }
+
+    return dot(planePoint - ray.origin, planeNormal) / denom;
 }
 
 
@@ -181,6 +210,56 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     return result;
 }
 
+// just check if the ray intersects a plane in the aabb with the normal of the tri
+fn traverse_blas_fast(ray: Ray, mesh_idx: i32, min_dist: f32) -> Hit {
+    let blas_start = mesh_blas_start(mesh_idx);
+    let blas_count = mesh_blas_count(mesh_idx);
+    let mesh_index_start = mesh_index_start(mesh_idx);
+    let mesh_pos_start = mesh_pos_start(mesh_idx);
+    
+    //TODO Should we start at 1 since we already tested aginst the first AABB in the TLAS?
+    var next_idx = 0; 
+    var hit: Hit;
+    hit.distance = F32_MAX;
+    var min_dist = min_dist;
+    var aabb_inter = vec2(0.0);
+    var last_aabb_min = vec3(0.0);
+    var last_aabb_max = vec3(0.0);
+    while (next_idx < blas_count) {
+        let aabb_min = get_blas_bvh(next_idx * 2 + 0 + blas_start); 
+        let aabb_max = get_blas_bvh(next_idx * 2 + 1 + blas_start); 
+        let entry_idx = bitcast<i32>(aabb_min.w);
+        let exit_idx = bitcast<i32>(aabb_max.w);
+        if entry_idx < 0 {
+            let triangle_idx = (entry_idx + 1) * -3;
+            var normal = get_tri_normal(mesh_index_start / 3 + triangle_idx / 3);
+            // TODO improve accuracy with distance to plane along normal (stored in normal.w)
+            let t = intersects_plane(ray, (last_aabb_min + last_aabb_max) / 2.0, normal.xyz);
+            if  t > aabb_inter.x - 0.005 && t < aabb_inter.y + 0.005 {
+                hit.distance = t;
+                hit.triangle_idx = triangle_idx;
+                hit.uv = vec2(0.5, 0.5);
+                min_dist = min(min_dist, hit.distance);
+            }
+            // Exit the current node.
+            next_idx = exit_idx;
+        } else {
+            // If entry_index is not -1 and the AABB test passes, then
+            // proceed to the node in entry_index (which goes down the bvh branch).
+
+            // If entry_index is not -1 and the AABB test fails, then
+            // proceed to the node in exit_index (which defines the next untested partition).
+            last_aabb_min = aabb_min.xyz;
+            last_aabb_max = aabb_max.xyz;
+            aabb_inter = intersects_aabb_seg(ray, aabb_min.xyz, aabb_max.xyz);
+            next_idx = select(exit_idx, 
+                              entry_idx, 
+                              aabb_inter.x < min_dist);
+        }
+    }
+    return hit;
+}
+
 fn traverse_blas(ray: Ray, mesh_idx: i32, min_dist: f32) -> Hit {
     let blas_start = mesh_blas_start(mesh_idx);
     let blas_count = mesh_blas_count(mesh_idx);
@@ -192,6 +271,7 @@ fn traverse_blas(ray: Ray, mesh_idx: i32, min_dist: f32) -> Hit {
     var hit: Hit;
     hit.distance = F32_MAX;
     var min_dist = min_dist;
+    var aabb_inter = vec2(0.0);
     while (next_idx < blas_count) {
         let aabb_min = get_blas_bvh(next_idx * 2 + 0 + blas_start); 
         let aabb_max = get_blas_bvh(next_idx * 2 + 1 + blas_start); 
@@ -300,7 +380,7 @@ fn scene_query(ray: Ray) -> SceneQuery {
 }
 
 // Inefficient, don't use this if getting more than normal.
-fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
+fn get_surface_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     let mesh_idx = get_instance_mesh_data_idx(instance_tex, hit.instance_idx);
     let mesh_index_start = mesh_index_start(mesh_idx);
     let mesh_pos_start = mesh_pos_start(mesh_idx);
@@ -325,7 +405,7 @@ fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     return normal;
 }
 
-fn get_surface_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
+fn compute_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     let mesh_idx = get_instance_mesh_data_idx(instance_tex, hit.instance_idx);
     let mesh_index_start = mesh_index_start(mesh_idx);
     let mesh_pos_start = mesh_pos_start(mesh_idx);
@@ -342,6 +422,19 @@ fn get_surface_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     let v1 = b - a;
     let v2 = c - a;
     var normal = normalize(cross(v1, v2));
+
+    // transform local space normal into world space
+    normal = normalize(transpose(model) * vec4(normal, 0.0)).xyz;
+
+    return normal; 
+}
+
+fn get_precomp_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
+    let mesh_idx = get_instance_mesh_data_idx(instance_tex, hit.instance_idx);
+    let mesh_index_start = mesh_index_start(mesh_idx);
+    let model = get_instance_model(instance_tex, hit.instance_idx);    
+    
+    var normal = get_tri_normal(mesh_index_start / 3 + hit.triangle_idx / 3).xyz;
 
     // transform local space normal into world space
     normal = normalize(transpose(model) * vec4(normal, 0.0)).xyz;
