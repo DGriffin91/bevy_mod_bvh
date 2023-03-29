@@ -2,7 +2,7 @@ use bevy::{
     core_pipeline::{
         core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state, fxaa::Fxaa,
     },
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
@@ -42,6 +42,7 @@ fn main() {
         .add_plugin(BVHPlugin)
         .add_plugin(GPUDataPlugin)
         .add_plugin(CameraControllerPlugin)
+        .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_startup_system(setup)
         .add_systems((cube_rotator, update_settings).in_base_set(CoreSet::Update))
         .add_startup_system(load_sponza)
@@ -295,6 +296,7 @@ impl FromWorld for PostProcessPipeline {
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 struct TraceSettings {
     frame: u32,
+    fps: f32,
 }
 
 /// set up a simple 3D scene
@@ -342,11 +344,12 @@ fn setup(
     // camera
     commands
         .spawn(Camera3dBundle {
-            transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+            transform: Transform::from_xyz(-10.5, 1.7, -1.0)
+                .looking_at(Vec3::new(0.0, 3.5, 0.0), Vec3::Y),
             ..default()
         })
         .insert(CameraController::default())
-        .insert(TraceSettings { frame: 0 });
+        .insert(TraceSettings { frame: 0, fps: 0.0 });
     //.insert(Fxaa::default());
 }
 
@@ -401,8 +404,11 @@ fn cube_rotator(
     }
 }
 
-fn update_settings(mut settings: Query<&mut TraceSettings>) {
+fn update_settings(mut settings: Query<&mut TraceSettings>, diagnostics: Res<Diagnostics>) {
     for mut setting in &mut settings {
         setting.frame = setting.frame.wrapping_add(1);
+        if let Some(diag) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
+            setting.fps = diag.value().unwrap_or(0.0) as f32;
+        }
     }
 }

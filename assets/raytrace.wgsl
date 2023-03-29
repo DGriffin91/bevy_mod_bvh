@@ -12,6 +12,7 @@ var screen_tex: texture_2d<f32>;
 var texture_sampler: sampler;
 struct TraceSettings {
     frame: u32,
+    fps: f32,
 }
 @group(0) @binding(3)
 var<uniform> settings: TraceSettings;
@@ -83,9 +84,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     //    col = vec4(0.0);    
     //}
 
-    col = print_value(coord, col, 0, f32(frame));
-    col = print_value(coord, col, 1, f32(get_tlas_max_length(gpu_static_tlas_data)));
-    col = print_value(coord, col, 2, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
+    col = print_value(coord, col, 0, f32(settings.fps));
+    col = print_value(coord, col, 1, f32(frame));
+    col = print_value(coord, col, 2, f32(get_tlas_max_length(gpu_static_tlas_data)));
+    col = print_value(coord, col, 3, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
 
     return col;
 }
