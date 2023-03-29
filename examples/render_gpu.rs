@@ -408,7 +408,9 @@ fn update_settings(mut settings: Query<&mut TraceSettings>, diagnostics: Res<Dia
     for mut setting in &mut settings {
         setting.frame = setting.frame.wrapping_add(1);
         if let Some(diag) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-            setting.fps = diag.value().unwrap_or(0.0) as f32;
+            let hysteresis = 0.9;
+            let fps = hysteresis + diag.value().unwrap_or(0.0) as f32;
+            setting.fps = setting.fps * hysteresis + fps * (1.0 - hysteresis);
         }
     }
 }

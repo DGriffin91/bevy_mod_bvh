@@ -181,15 +181,17 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     return result;
 }
 
-fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
+fn traverse_blas(ray: Ray, mesh_idx: i32, min_dist: f32) -> Hit {
     let blas_start = mesh_blas_start(mesh_idx);
     let blas_count = mesh_blas_count(mesh_idx);
     let mesh_index_start = mesh_index_start(mesh_idx);
     let mesh_pos_start = mesh_pos_start(mesh_idx);
-
-    var next_idx = 0;
+    
+    //TODO Should we start at 1 since we already tested aginst the first AABB in the TLAS?
+    var next_idx = 0; 
     var hit: Hit;
     hit.distance = F32_MAX;
+    var min_dist = min_dist;
     while (next_idx < blas_count) {
         let aabb_min = get_blas_bvh(next_idx * 2 + 0 + blas_start); 
         let aabb_max = get_blas_bvh(next_idx * 2 + 1 + blas_start); 
@@ -212,6 +214,7 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
                 hit.triangle_idx = triangle_idx;
                 hit.uv = intr.uv;
             }
+            min_dist = min(min_dist, hit.distance);
             // Exit the current node.
             next_idx = exit_idx;
         } else {
@@ -222,18 +225,18 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
             // proceed to the node in exit_index (which defines the next untested partition).
             next_idx = select(exit_idx, 
                               entry_idx, 
-                              intersects_aabb(ray, aabb_min.xyz, aabb_max.xyz) < hit.distance);
+                              intersects_aabb(ray, aabb_min.xyz, aabb_max.xyz) < min_dist);
         }
     }
     return hit;
 }
 
-fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: Ray) -> Hit {
+fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: Ray, min_dist: f32) -> Hit {
     var next_idx = 0;
-    var min_dist = F32_MAX;
     var temp_return = vec4(0.0);
     var hit: Hit;
     hit.distance = F32_MAX;
+    var min_dist = min_dist;
     while (next_idx < get_tlas_max_length(tlas_tex)) {
         let aabb_min = get_tlas_bvh(tlas_tex, next_idx * 2 + 0); 
         let aabb_max = get_tlas_bvh(tlas_tex, next_idx * 2 + 1); 
@@ -255,12 +258,13 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
             local_ray.direction = normalize((model * vec4(ray.direction, 0.0)).xyz);
             local_ray.inv_direction = 1.0 / local_ray.direction;
 
-            var new_hit = traverse_blas(local_ray, mesh_idx);
+            var new_hit = traverse_blas(local_ray, mesh_idx, min_dist);
 
             if new_hit.distance < hit.distance {
                 hit = new_hit;
                 hit.instance_idx = instance_idx;
             }
+            min_dist = min(min_dist, hit.distance);
 
             // Exit the current node.
             next_idx = exit_idx;
@@ -279,8 +283,8 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
 }
 
 fn scene_query(ray: Ray) -> SceneQuery {
-    let hit_static = traverse_tlas(gpu_static_tlas_data, gpu_static_instance_data, ray);
-    let hit_dynamic = traverse_tlas(gpu_dynamic_tlas_data, gpu_dynamic_instance_data, ray);
+    let hit_static = traverse_tlas(gpu_static_tlas_data, gpu_static_instance_data, ray, F32_MAX);
+    let hit_dynamic = traverse_tlas(gpu_dynamic_tlas_data, gpu_dynamic_instance_data, ray, hit_static.distance);
 
     if hit_static.distance < hit_dynamic.distance {
         var query: SceneQuery;
