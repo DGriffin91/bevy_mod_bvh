@@ -61,8 +61,9 @@ pub struct GpuData {
     pub gpu_static_tlas_data: Handle<Image>,
     pub gpu_dynamic_tlas_data: Handle<Image>,
 
-    // Vec4Vec4 with w unused interleaved vertex pos,nor,pos,nor,...
-    pub vert_pos_nor: Handle<Image>,
+    // Vec4 with w unused
+    pub vert_pos: Handle<Image>,
+    pub vert_nor: Handle<Image>,
 
     // Uint idx flat as tri abcabcabc...
     pub vert_indices: Handle<Image>,
@@ -102,7 +103,8 @@ fn init_gpu_data(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             .add(f32rgba_image(&[Vec4::ZERO], "uninit_gpu_static_tlas_data")),
         gpu_dynamic_tlas_data: images
             .add(f32rgba_image(&[Vec4::ZERO], "uninit_gpu_dynamic_tlas_data")),
-        vert_pos_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_positions")),
+        vert_pos: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_positions")),
+        vert_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_normals")),
         vert_indices: images.add(i32_image(&[0], "uninit_vert_indices")),
         blas: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_blas")),
         mesh_data: images.add(i32_image(&[0], "uninit_mesh_data")),
@@ -134,15 +136,17 @@ fn update_vertices_indices_blas_data(
     dbg!("update_vertices_indices_blas_data");
     let mut mesh_data = Vec::new();
     let mut index_data = Vec::new();
-    let mut pos_nor_data = Vec::new();
+    let mut pos_data = Vec::new();
+    let mut nor_data = Vec::new();
     let mut blas_data = Vec::new();
     let mut mesh_data_reverse_map = HashMap::new();
 
+    let mut largest = 0;
     for (_mesh_idx, (id, mesh)) in meshes.iter().enumerate() {
         let mesh_h = meshes.get_handle(id);
         let blas_start = blas_data.len();
         let index_start = index_data.len();
-        let pos_start = pos_nor_data.len() / 2; // divide by 2 since it's pos,nor interleaved
+        let pos_start = pos_data.len(); // can be reused for normals
         let indices = match mesh.indices().unwrap() {
             bevy::render::mesh::Indices::U16(_) => panic!("U16 Indices not supported"),
             bevy::render::mesh::Indices::U32(a) => a,
@@ -152,14 +156,13 @@ fn update_vertices_indices_blas_data(
         }
 
         for (p, n) in mesh_positions(&mesh).zip(mesh_normals(&mesh)) {
-            pos_nor_data.push(p.extend(0.0));
-            pos_nor_data.push(n.extend(0.0));
+            pos_data.push(p.extend(0.0));
+            nor_data.push(n.extend(0.0));
         }
 
         let mesh_blas = blas.0.get(&mesh_h).unwrap();
 
         let flat_bvh = mesh_blas.bvh.flatten();
-
         // TODO keep binary mesh data around
         for f in flat_bvh.iter() {
             let entry_index = if f.entry_index == u32::MAX {
@@ -171,23 +174,6 @@ fn update_vertices_indices_blas_data(
             };
             blas_data.push(f.aabb.min.extend(entry_index));
             blas_data.push(f.aabb.max.extend(cast(f.exit_index as i32)));
-            // To retrieve triangle data:
-            /*
-                let aabb_min = get_bvh(next_idx * 2 + 0);
-                let aabb_max = get_bvh(next_idx * 2 + 1);
-                let entry_idx = bitcast<i32>(aabb_min.w);
-                let exit_idx = bitcast<i32>(aabb_max.w);
-                if entry_idx < 0 {
-                    var shape_idx = (entry_idx + 1) * -3;
-                    shape_idx += mesh_index_start; // offset to where this mesh starts in the buffer
-                    let ind1 = get_ind(shape_idx+0); // read from ind buffer
-                    let ind2 = get_ind(shape_idx+1);
-                    let ind3 = get_ind(shape_idx+2);
-                    let p1 = get_vert(ind1 * 2); // retrieve vertex positions
-                    let p2 = get_vert(ind2 * 2);
-                    let p3 = get_vert(ind3 * 2);
-                    let intr = intersects_triangle(ray, p1, p2, p3);
-            */
         }
 
         let mesh_data_idx = mesh_data.len();
@@ -202,7 +188,8 @@ fn update_vertices_indices_blas_data(
     }
 
     gpu_data.vert_indices = images.add(i32_image(&index_data, "vert_indices"));
-    gpu_data.vert_pos_nor = images.add(f32rgba_image(&pos_nor_data, "vert_positions_normals"));
+    gpu_data.vert_pos = images.add(f32rgba_image(&pos_data, "vert_positions"));
+    gpu_data.vert_nor = images.add(f32rgba_image(&nor_data, "vert_normals"));
     gpu_data.blas = images.add(f32rgba_image(&blas_data, "blas"));
     gpu_data.mesh_data = images.add(i32_image(&cast_slice(&mesh_data), "mesh_data"));
     gpu_data.mesh_data_reverse_map = mesh_data_reverse_map;
@@ -363,14 +350,15 @@ pub fn extract_gpu_data(mut commands: Commands, gpu_data: Extract<Res<GpuData>>)
 pub fn get_bindings<'a>(
     images: &'a RenderAssets<Image>,
     gpu_data: &'a GpuData,
-    bindings: [u32; 8],
-) -> Option<[BindGroupEntry<'a>; 8]> {
+    bindings: [u32; 9],
+) -> Option<[BindGroupEntry<'a>; 9]> {
     if let (
         Some(gpu_static_tlas_data),
         Some(gpu_dynamic_tlas_data),
         Some(mesh_data),
         Some(vert_indices),
         Some(vert_positions),
+        Some(vert_normals),
         Some(blas),
         Some(gpu_static_instance_data),
         Some(gpu_dynamic_instance_data),
@@ -379,7 +367,8 @@ pub fn get_bindings<'a>(
         images.get(&gpu_data.gpu_dynamic_tlas_data),
         images.get(&gpu_data.mesh_data),
         images.get(&gpu_data.vert_indices),
-        images.get(&gpu_data.vert_pos_nor),
+        images.get(&gpu_data.vert_pos),
+        images.get(&gpu_data.vert_nor),
         images.get(&gpu_data.blas),
         images.get(&gpu_data.gpu_static_instance_data),
         images.get(&gpu_data.gpu_dynamic_instance_data),
@@ -407,14 +396,18 @@ pub fn get_bindings<'a>(
             },
             BindGroupEntry {
                 binding: bindings[5],
-                resource: BindingResource::TextureView(&blas.texture_view),
+                resource: BindingResource::TextureView(&vert_normals.texture_view),
             },
             BindGroupEntry {
                 binding: bindings[6],
-                resource: BindingResource::TextureView(&gpu_static_instance_data.texture_view),
+                resource: BindingResource::TextureView(&blas.texture_view),
             },
             BindGroupEntry {
                 binding: bindings[7],
+                resource: BindingResource::TextureView(&gpu_static_instance_data.texture_view),
+            },
+            BindGroupEntry {
+                binding: bindings[8],
                 resource: BindingResource::TextureView(&gpu_dynamic_instance_data.texture_view),
             },
         ])
@@ -423,7 +416,7 @@ pub fn get_bindings<'a>(
     }
 }
 
-pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntry; 8] {
+pub fn get_bind_group_layout_entries(bindings: [u32; 9]) -> [BindGroupLayoutEntry; 9] {
     [
         // gpu_static_tlas_data
         BindGroupLayoutEntry {
@@ -480,7 +473,7 @@ pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntr
             },
             count: None,
         },
-        // blas
+        // vert_normals
         BindGroupLayoutEntry {
             binding: bindings[5],
             visibility: ShaderStages::FRAGMENT,
@@ -491,7 +484,7 @@ pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntr
             },
             count: None,
         },
-        // gpu_static_instance_data
+        // blas
         BindGroupLayoutEntry {
             binding: bindings[6],
             visibility: ShaderStages::FRAGMENT,
@@ -502,9 +495,20 @@ pub fn get_bind_group_layout_entries(bindings: [u32; 8]) -> [BindGroupLayoutEntr
             },
             count: None,
         },
-        // gpu_dynamic_instance_data
+        // gpu_static_instance_data
         BindGroupLayoutEntry {
             binding: bindings[7],
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Texture {
+                sample_type: TextureSampleType::Float { filterable: false },
+                view_dimension: TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        // gpu_dynamic_instance_data
+        BindGroupLayoutEntry {
+            binding: bindings[8],
             visibility: ShaderStages::FRAGMENT,
             ty: BindingType::Texture {
                 sample_type: TextureSampleType::Float { filterable: false },

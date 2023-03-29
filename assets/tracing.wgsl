@@ -1,13 +1,11 @@
 fn get_vert_position(idx: i32) -> vec3<f32> {
-    let idx = idx * 2 + 0;
-    let dimension = textureDimensions(vert_indices).x;
-    return textureLoad(vert_pos_nor, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
+    let dimension = textureDimensions(vert_pos).x;
+    return textureLoad(vert_pos, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
 }
 
 fn get_vert_normal(idx: i32) -> vec3<f32> {
-    let idx = idx * 2 + 1;
-    let dimension = textureDimensions(vert_indices).x;
-    return textureLoad(vert_pos_nor, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
+    let dimension = textureDimensions(vert_nor).x;
+    return textureLoad(vert_nor, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
 }
 
 fn get_vert_index(idx: i32) -> i32 {
@@ -113,40 +111,52 @@ struct Aabb {
 struct Intersection {
     uv: vec2<f32>,
     distance: f32,
-    backface: bool,
 };
 
 fn inside_aabb(p: vec3<f32>, minv: vec3<f32>, maxv: vec3<f32>) -> bool {
     return all(p > minv) && all(p < maxv);
 }
 
+// returns distance to intersection
 fn intersects_aabb(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> f32 {
     let t1 = (minv - ray.origin) * ray.inv_direction;
     let t2 = (maxv - ray.origin) * ray.inv_direction;
 
-    var t_min = min(t1.x, t2.x);
-    var t_max = max(t1.x, t2.x);
+    let tmin = min(t1, t2);
+    let tmax = max(t1, t2);
 
-    t_min = max(t_min, min(t1.y, t2.y));
-    t_max = min(t_max, max(t1.y, t2.y));
+    let tmin_n = max(tmin.x, max(tmin.y, tmin.z));
+    let tmax_n = min(tmax.x, min(tmax.y, tmax.z));
 
-    t_min = max(t_min, min(t1.z, t2.z));
-    t_max = min(t_max, max(t1.z, t2.z));
-
-    return select(F32_MAX, t_min, t_max >= t_min && t_max >= 0.0);
+    return select(F32_MAX, tmin_n, tmax_n >= tmin_n && tmax_n >= 0.0);
 }
+
+// A Ray-Box Intersection Algorithm and Efficient Dynamic Voxel Rendering
+// Alexander Majercik, Cyril Crassin, Peter Shirley, and Morgan McGuire
+fn slabs(ray: Ray, minv: vec3<f32>, maxv: vec3<f32>) -> bool {
+    let t0 = (minv - ray.origin) * ray.inv_direction;
+    let t1 = (maxv - ray.origin) * ray.inv_direction;
+
+    let tmin = min(t0, t1);
+    let tmax = max(t0, t1);
+
+    return max(tmin.x, max(tmin.y, tmin.z)) <= min(tmax.x, min(tmax.y, tmax.z));
+}
+
+
 
 fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) -> Intersection {
     var result: Intersection;
     result.distance = F32_MAX;
-    result.backface = false;
 
     let ab = p1 - p2;
     let ac = p3 - p2;
 
     let u_vec = cross(ray.direction, ac);
     let det = dot(ab, u_vec);
-    if abs(det) < F32_EPSILON {
+
+    // If backface culling on: det, off: abs(det)
+    if abs(det) < F32_EPSILON  {
         return result;
     }
 
@@ -154,13 +164,12 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     let ao = ray.origin - p2;
     let u = dot(ao, u_vec) * inv_det;
     if u < 0.0 || u > 1.0 {
-        result.uv = vec2<f32>(u, 0.0);
         return result;
     }
 
     let v_vec = cross(ao, ab);
     let v = dot(ray.direction, v_vec) * inv_det;
-    result.uv = vec2<f32>(u, v);
+    result.uv = vec2(u, v);
     if v < 0.0 || u + v > 1.0 {
         return result;
     }
@@ -168,7 +177,6 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     let distance = dot(ac, v_vec) * inv_det;
     result.distance = select(result.distance, distance, distance > F32_EPSILON);
 
-    result.backface = distance > F32_EPSILON && det < F32_EPSILON;
 
     return result;
 }
@@ -180,7 +188,6 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
     let mesh_pos_start = mesh_pos_start(mesh_idx);
 
     var next_idx = 0;
-    var min_dist = F32_MAX;
     var hit: Hit;
     hit.distance = F32_MAX;
     while (next_idx < blas_count) {
@@ -197,15 +204,14 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
             let p1 = get_vert_position(ind1 + mesh_pos_start);
             let p2 = get_vert_position(ind2 + mesh_pos_start);
             let p3 = get_vert_position(ind3 + mesh_pos_start);
-            
 
-            let intr = intersects_triangle(ray, p1, p2, p3);
+            // vert order is acb?
+            let intr = intersects_triangle(ray, p1, p3, p2);
             if intr.distance < hit.distance {
                 hit.distance = intr.distance;
                 hit.triangle_idx = triangle_idx;
                 hit.uv = intr.uv;
             }
-            //min_dist = min(min_dist, intr.distance);
             // Exit the current node.
             next_idx = exit_idx;
         } else {
@@ -216,7 +222,7 @@ fn traverse_blas(ray: Ray, mesh_idx: i32) -> Hit {
             // proceed to the node in exit_index (which defines the next untested partition).
             next_idx = select(exit_idx, 
                               entry_idx, 
-                              intersects_aabb(ray, aabb_min.xyz, aabb_max.xyz) < min_dist);
+                              intersects_aabb(ray, aabb_min.xyz, aabb_max.xyz) < hit.distance);
         }
     }
     return hit;
@@ -300,10 +306,9 @@ fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     let ind2 = get_vert_index(hit.triangle_idx + 1 + mesh_index_start);
     let ind3 = get_vert_index(hit.triangle_idx + 2 + mesh_index_start);
     
-    // vert order is acb?
     let a = get_vert_normal(ind1 + mesh_pos_start).xyz;
-    let c = get_vert_normal(ind2 + mesh_pos_start).xyz;
-    let b = get_vert_normal(ind3 + mesh_pos_start).xyz;
+    let b = get_vert_normal(ind2 + mesh_pos_start).xyz;
+    let c = get_vert_normal(ind3 + mesh_pos_start).xyz;
 
     // Barycentric Coordinates
     let u = hit.uv.x;
@@ -314,4 +319,28 @@ fn get_tri_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
     normal = normalize(transpose(model) * vec4(normal, 0.0)).xyz;
 
     return normal;
+}
+
+fn get_surface_normal(instance_tex: texture_2d<f32>, hit: Hit) -> vec3<f32> {
+    let mesh_idx = get_instance_mesh_data_idx(instance_tex, hit.instance_idx);
+    let mesh_index_start = mesh_index_start(mesh_idx);
+    let mesh_pos_start = mesh_pos_start(mesh_idx);
+    let model = get_instance_model(instance_tex, hit.instance_idx);    
+    
+    let ind1 = get_vert_index(hit.triangle_idx + 0 + mesh_index_start);
+    let ind2 = get_vert_index(hit.triangle_idx + 1 + mesh_index_start);
+    let ind3 = get_vert_index(hit.triangle_idx + 2 + mesh_index_start);
+    
+    let a = get_vert_position(ind1 + mesh_pos_start).xyz;
+    let b = get_vert_position(ind2 + mesh_pos_start).xyz;
+    let c = get_vert_position(ind3 + mesh_pos_start).xyz;
+
+    let v1 = b - a;
+    let v2 = c - a;
+    var normal = normalize(cross(v1, v2));
+
+    // transform local space normal into world space
+    normal = normalize(transpose(model) * vec4(normal, 0.0)).xyz;
+
+    return normal; 
 }

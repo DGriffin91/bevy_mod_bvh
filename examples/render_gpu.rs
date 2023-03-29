@@ -2,6 +2,7 @@ use bevy::{
     core_pipeline::{
         core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state, fxaa::Fxaa,
     },
+    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
@@ -25,10 +26,10 @@ use bevy::{
         RenderApp,
     },
 };
-use bevy_basic_camera::CameraController;
+use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
     gpu_data::{get_bind_group_layout_entries, get_bindings, GPUDataPlugin, GpuData},
-    BVHPlugin, DynamicTLAS, StaticTLAS,
+    BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
 fn main() {
@@ -40,8 +41,11 @@ fn main() {
         .add_plugin(PostProcessPlugin)
         .add_plugin(BVHPlugin)
         .add_plugin(GPUDataPlugin)
+        .add_plugin(CameraControllerPlugin)
         .add_startup_system(setup)
         .add_systems((cube_rotator, update_settings).in_base_set(CoreSet::Update))
+        .add_startup_system(load_sponza)
+        .add_system(set_sponza_tlas.before(BVHSet::BlasTlas))
         .run();
 }
 
@@ -151,7 +155,7 @@ impl Node for RayTraceNode {
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11]) else {
+        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12]) else {
             return Ok(());
         };
 
@@ -236,7 +240,7 @@ impl FromWorld for PostProcessPipeline {
             },
         ];
 
-        entries.append(&mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11]).to_vec());
+        entries.append(&mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12]).to_vec());
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("post_process_bind_group_layout"),
@@ -343,15 +347,57 @@ fn setup(
         })
         .insert(CameraController::default())
         .insert(TraceSettings { frame: 0 });
+    //.insert(Fxaa::default());
+}
+
+fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn(SceneBundle {
+        scene: asset_server.load(
+            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Main_glTF_002.gltf#Scene0",
+        ),
+        ..default()
+    });
+    //commands.spawn(SceneBundle {
+    //    scene: asset_server.load(
+    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+    //    ),
+    //    ..default()
+    //});
+}
+
+fn set_sponza_tlas(
+    mut commands: Commands,
+    query: Query<
+        Entity,
+        (
+            With<Handle<Mesh>>,
+            Without<StaticTLAS>,
+            Without<DynamicTLAS>,
+        ),
+    >,
+) {
+    for entity in &query {
+        commands.entity(entity).insert(StaticTLAS);
+    }
 }
 
 #[derive(Component)]
 struct RotateCube;
 
-fn cube_rotator(time: Res<Time>, mut query: Query<&mut Transform, With<RotateCube>>) {
-    for mut transform in &mut query {
-        transform.rotate_x(1.0 * time.delta_seconds());
-        transform.rotate_y(0.7 * time.delta_seconds());
+fn cube_rotator(
+    time: Res<Time>,
+    mut query: Query<&mut Transform, With<RotateCube>>,
+    keys: Res<Input<KeyCode>>,
+    mut pause: Local<bool>,
+) {
+    if keys.just_pressed(KeyCode::Space) {
+        *pause = !*pause;
+    }
+    if !*pause {
+        for mut transform in &mut query {
+            transform.rotate_x(1.0 * time.delta_seconds());
+            transform.rotate_y(0.7 * time.delta_seconds());
+        }
     }
 }
 
