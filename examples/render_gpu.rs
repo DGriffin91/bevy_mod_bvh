@@ -1,8 +1,6 @@
 use bevy::{
-    core_pipeline::{
-        core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state, fxaa::Fxaa,
-    },
-    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    core_pipeline::{core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state},
+    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
     pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
@@ -25,19 +23,33 @@ use bevy::{
         view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
         RenderApp,
     },
+    window::PresentMode,
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    gpu_data::{get_bind_group_layout_entries, get_bindings, GPUDataPlugin, GpuData},
+    gpu_data::{
+        get_bind_group_layout_entries, get_bindings, get_default_pipeline_desc, layout_entry_d2,
+        sampler_entry, view_entry, GPUDataPlugin, GpuData,
+    },
     BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            watch_for_changes: true,
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    watch_for_changes: true,
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        present_mode: PresentMode::Immediate,
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .add_plugin(PostProcessPlugin)
         .add_plugin(BVHPlugin)
         .add_plugin(GPUDataPlugin)
@@ -199,36 +211,10 @@ impl FromWorld for PostProcessPipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.resource::<RenderDevice>();
 
-        let view = BindGroupLayoutEntry {
-            binding: 0,
-            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
-            ty: BindingType::Buffer {
-                ty: BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                min_binding_size: Some(ViewUniform::min_size()),
-            },
-            count: None,
-        };
-
         let mut entries = vec![
-            // View
-            view.clone(),
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Float { filterable: true },
-                    view_dimension: TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                count: None,
-            },
+            view_entry(0),
+            layout_entry_d2(1, TextureSampleType::Float { filterable: true }),
+            sampler_entry(2),
             BindGroupLayoutEntry {
                 binding: 3,
                 visibility: ShaderStages::FRAGMENT,
@@ -254,38 +240,13 @@ impl FromWorld for PostProcessPipeline {
 
         let shader = world.resource::<AssetServer>().load("raytrace.wgsl");
 
-        let mut shader_defs = Vec::new();
-        shader_defs.push(ShaderDefVal::UInt(
-            "MAX_DIRECTIONAL_LIGHTS".to_string(),
-            MAX_DIRECTIONAL_LIGHTS as u32,
-        ));
-        shader_defs.push(ShaderDefVal::UInt(
-            "MAX_CASCADES_PER_LIGHT".to_string(),
-            MAX_CASCADES_PER_LIGHT as u32,
-        ));
-
-        let pipeline_id =
-            world
-                .resource_mut::<PipelineCache>()
-                .queue_render_pipeline(RenderPipelineDescriptor {
-                    label: Some("post_process_pipeline".into()),
-                    layout: vec![layout.clone()],
-                    vertex: fullscreen_shader_vertex_state(),
-                    fragment: Some(FragmentState {
-                        shader,
-                        shader_defs,
-                        entry_point: "fragment".into(),
-                        targets: vec![Some(ColorTargetState {
-                            format: TextureFormat::bevy_default(),
-                            blend: None,
-                            write_mask: ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: MultisampleState::default(),
-                    push_constant_ranges: vec![],
-                });
+        let pipeline_id = get_default_pipeline_desc(
+            Vec::new(),
+            layout.clone(),
+            &mut world.resource_mut::<PipelineCache>(),
+            shader,
+            false,
+        );
 
         Self {
             layout,
@@ -352,7 +313,6 @@ fn setup(
         })
         .insert(CameraController::default())
         .insert(TraceSettings { frame: 0, fps: 0.0 });
-    //.insert(Fxaa::default());
 }
 
 fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {

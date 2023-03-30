@@ -1,15 +1,21 @@
 use bevy::core::cast_slice;
 
+use bevy::core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
 use bevy::math::{vec4, Vec4Swizzles};
+use bevy::pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS};
 use bevy::prelude::*;
 
 use bevy::render::primitives::Aabb;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::{
-    BindGroupEntry, BindGroupLayoutEntry, BindingResource, BindingType, Extent3d, ShaderStages,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureViewDimension,
+    BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
+    BufferBindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
+    FragmentState, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor,
+    SamplerBindingType, ShaderDefVal, ShaderStages, ShaderType, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension,
 };
+use bevy::render::texture::BevyDefault;
+use bevy::render::view::ViewUniform;
 use bevy::render::{Extract, RenderApp};
 
 use bevy::utils::HashMap;
@@ -450,115 +456,91 @@ pub fn get_bindings<'a>(
 
 pub fn get_bind_group_layout_entries(bindings: [u32; 10]) -> [BindGroupLayoutEntry; 10] {
     [
-        // gpu_static_tlas_data
-        BindGroupLayoutEntry {
-            binding: bindings[0],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // gpu_dynamic_tlas_data
-        BindGroupLayoutEntry {
-            binding: bindings[1],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // mesh_data
-        BindGroupLayoutEntry {
-            binding: bindings[2],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Sint,
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // vert_indices
-        BindGroupLayoutEntry {
-            binding: bindings[3],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Sint,
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // vert_positions
-        BindGroupLayoutEntry {
-            binding: bindings[4],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // vert_normals
-        BindGroupLayoutEntry {
-            binding: bindings[5],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // tri_normals
-        BindGroupLayoutEntry {
-            binding: bindings[6],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // blas
-        BindGroupLayoutEntry {
-            binding: bindings[7],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // gpu_static_instance_data
-        BindGroupLayoutEntry {
-            binding: bindings[8],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
-        // gpu_dynamic_instance_data
-        BindGroupLayoutEntry {
-            binding: bindings[9],
-            visibility: ShaderStages::FRAGMENT,
-            ty: BindingType::Texture {
-                sample_type: TextureSampleType::Float { filterable: false },
-                view_dimension: TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        },
+        layout_entry_d2(bindings[0], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[1], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[2], TextureSampleType::Sint),
+        layout_entry_d2(bindings[3], TextureSampleType::Sint),
+        layout_entry_d2(bindings[4], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[5], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[6], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[7], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[8], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[9], TextureSampleType::Float { filterable: false }),
     ]
+}
+
+pub fn layout_entry_d2(binding: u32, sample_type: TextureSampleType) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Texture {
+            sample_type,
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+pub fn sampler_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::FRAGMENT,
+        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
+pub fn view_entry(binding: u32) -> BindGroupLayoutEntry {
+    BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: Some(ViewUniform::min_size()),
+        },
+        count: None,
+    }
+}
+
+pub fn get_default_pipeline_desc(
+    mut shader_defs: Vec<ShaderDefVal>,
+    layout: BindGroupLayout,
+    pipeline_cache: &mut PipelineCache,
+    shader: Handle<Shader>,
+    hdr: bool,
+) -> CachedRenderPipelineId {
+    shader_defs.push(ShaderDefVal::UInt(
+        "MAX_DIRECTIONAL_LIGHTS".to_string(),
+        MAX_DIRECTIONAL_LIGHTS as u32,
+    ));
+    shader_defs.push(ShaderDefVal::UInt(
+        "MAX_CASCADES_PER_LIGHT".to_string(),
+        MAX_CASCADES_PER_LIGHT as u32,
+    ));
+
+    pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("post_process_pipeline".into()),
+        layout: vec![layout],
+        vertex: fullscreen_shader_vertex_state(),
+        fragment: Some(FragmentState {
+            shader,
+            shader_defs,
+            entry_point: "fragment".into(),
+            targets: vec![Some(ColorTargetState {
+                format: if hdr {
+                    TextureFormat::Rgba16Float
+                } else {
+                    TextureFormat::bevy_default()
+                },
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        push_constant_ranges: vec![],
+    })
 }

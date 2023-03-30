@@ -317,7 +317,8 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<f32>, ray: 
     var hit: Hit;
     hit.distance = F32_MAX;
     var min_dist = min_dist;
-    while (next_idx < get_tlas_max_length(tlas_tex)) {
+    let max_length = get_tlas_max_length(tlas_tex);
+    while (next_idx < max_length) {
         let aabb_min = get_tlas_bvh(tlas_tex, next_idx * 2 + 0); 
         let aabb_max = get_tlas_bvh(tlas_tex, next_idx * 2 + 1); 
         let entry_idx = bitcast<i32>(aabb_min.w);
