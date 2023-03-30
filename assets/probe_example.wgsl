@@ -6,16 +6,17 @@
 #import bevy_pbr::utils
 #import bevy_core_pipeline::fullscreen_vertex_shader
 
-@group(0) @binding(1)
-var screen_tex: texture_2d<f32>;
-@group(0) @binding(2)
-var texture_sampler: sampler;
+
 struct TraceSettings {
     frame: u32,
     fps: f32,
 }
-@group(0) @binding(3)
+@group(0) @binding(1)
 var<uniform> settings: TraceSettings;
+@group(0) @binding(2)
+var prev_sh_tex: texture_storage_2d<rgba16float,read>;
+@group(0) @binding(3)
+var next_sh_tex: texture_storage_2d<rgba16float,write>;
 @group(0) @binding(4)
 var vert_indices: texture_2d<i32>;
 @group(0) @binding(5)
@@ -59,41 +60,33 @@ fn get_screen_ray(uv: vec2<f32>) -> Ray {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let coord = in.position.xy;
     let icoord = vec2<i32>(in.position.xy);
-    let uv = in.position.xy/view.viewport.zw;
     let frame = settings.frame;
     
-    var col = textureSample(screen_tex, texture_sampler, in.uv);
+    let prev_dist = textureLoad(prev_sh_tex, icoord).x;
 
-    let ray = get_screen_ray(uv);
+    let rand_vec = vec3(
+        hash_noise(icoord + 1, frame * 100u + 1123u), 
+        hash_noise(icoord + 2, frame * 200u + 11234u),  
+        hash_noise(icoord + 3, frame * 300u + 111345u)) * 2.0 - 1.0;
+
+    let probe_spacing = 0.5;
+    let offset = vec3(-8.0, 0.0, -16.0);
+
+    let probe_idx = vec3<i32>(icoord.x % 16, icoord.y, icoord.x / 16);
+
+    let ws_pos = (vec3<f32>(probe_idx) + offset) * probe_spacing;
+
+    
+    var ray: Ray;
+    ray.origin = ws_pos;
+    ray.direction = normalize(rand_vec);
+    ray.inv_direction = 1.0 / ray.direction;
 
     let query = scene_query(ray);
 
-    if query.hit.distance != F32_MAX {
-        var normal = vec3(0.0);
+    let new_dist = mix(query.hit.distance, prev_dist, 0.9);
+    
+    textureStore(next_sh_tex, vec2(probe_idx.x + probe_idx.z * 16, probe_idx.y), vec4(new_dist));
 
-        // could use query.hit.instance_idx to look up into your own material data
-        // given a texture that has references ordered the same way as tlas.aabbs
-        // see create_instance_mesh_data
-        
-        // another option would be to tack on a material idx to static_instance_data
-        // then order the materials by that idx, this would allow the material layout
-        // to not need to be updated when instances change
-
-        if query.static_tlas {
-            normal = get_surface_normal(static_instance_data, static_instance_mat, query.hit);
-        } else {
-            normal = get_surface_normal(dynamic_instance_data, dynamic_instance_mat, query.hit);
-        }
-
-        col = vec4(vec3(normal), 1.0);
-    } else {
-        col = vec4(0.0);    
-    }
-
-    col = print_value(coord, col, 0, f32(settings.fps));
-    col = print_value(coord, col, 1, f32(frame));
-    col = print_value(coord, col, 2, f32(get_tlas_max_length(static_tlas_data)));
-    col = print_value(coord, col, 3, f32(get_tlas_max_length(dynamic_tlas_data)));
-
-    return col;
+    return vec4(0.0);
 }

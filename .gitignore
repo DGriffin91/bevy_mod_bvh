@@ -2,3 +2,4 @@
 Cargo.lock
 render_gpu.exe
 imgui.ini
+render_gpu_probes.exe
