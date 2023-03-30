@@ -83,9 +83,9 @@ pub fn trace_ray(
 
     let scene_ray = Ray::new(origin, direction);
 
-    append_closest_entities_hit(static_tlas, blas, &scene_ray, &entities, &mut hit_entites);
+    append_closest_entities_hit(static_tlas, blas, &scene_ray, entities, &mut hit_entites);
 
-    append_closest_entities_hit(dynamic_tlas, blas, &scene_ray, &entities, &mut hit_entites);
+    append_closest_entities_hit(dynamic_tlas, blas, &scene_ray, entities, &mut hit_entites);
 
     let mut closest_dist = std::f32::MAX;
 

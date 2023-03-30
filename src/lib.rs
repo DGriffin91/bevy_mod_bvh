@@ -49,9 +49,6 @@ pub fn build_blas(
             }
         }
     }
-    if mesh_events.is_empty() {
-        return;
-    }
 }
 
 pub fn check_tlas_need_update(
@@ -119,7 +116,7 @@ pub fn update_tlas(
             //if !visibility.is_visible() {
             //    continue;
             //}
-            static_aabbs.push(TLASAABB::new(entity.clone(), aabb, trans));
+            static_aabbs.push(TLASAABB::new(entity, aabb, trans));
         }
         if !static_aabbs.is_empty() {
             static_tlas.0.bvh = Some(BVH::build(&mut static_aabbs));
@@ -135,7 +132,7 @@ pub fn update_tlas(
             if !visibility.is_visible() {
                 continue;
             }
-            dynamic_aabbs.push(TLASAABB::new(entity.clone(), aabb, trans));
+            dynamic_aabbs.push(TLASAABB::new(entity, aabb, trans));
         }
         if !dynamic_aabbs.is_empty() {
             dynamic_tlas.0.bvh = Some(BVH::build(&mut dynamic_aabbs));
@@ -173,7 +170,7 @@ impl MeshBVHItem {
                         )
                     })
                     .collect::<Vec<Triangle>>();
-                if triangles.len() > 0 {
+                if !triangles.is_empty() {
                     return Some(MeshBVHItem {
                         bvh: BVH::build(&mut triangles),
                         triangles,

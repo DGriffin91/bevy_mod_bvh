@@ -5,7 +5,6 @@ use bevy::math::{vec4, Vec4Swizzles};
 use bevy::pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS};
 use bevy::prelude::*;
 
-use bevy::render::primitives::Aabb;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::{
     BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
@@ -153,7 +152,6 @@ fn update_vertices_indices_blas_data(
     let mut blas_data = Vec::new();
     let mut mesh_data_reverse_map = HashMap::new();
 
-    let mut largest = 0;
     for (_mesh_idx, (id, mesh)) in meshes.iter().enumerate() {
         let mesh_h = meshes.get_handle(id);
         let blas_start = blas_data.len();
@@ -167,7 +165,7 @@ fn update_vertices_indices_blas_data(
             index_data.push(*index as i32);
         }
 
-        for (p, n) in mesh_positions(&mesh).zip(mesh_normals(&mesh)) {
+        for (p, n) in mesh_positions(mesh).zip(mesh_normals(mesh)) {
             pos_data.push(p.extend(0.0));
             nor_data.push(n.extend(0.0));
         }
@@ -223,7 +221,7 @@ fn update_vertices_indices_blas_data(
     gpu_data.vert_nor = images.add(f32rgba_image(&nor_data, "vert_normals"));
     gpu_data.tri_nor = images.add(f32rgba_image(&tri_nor_data, "tri_normals"));
     gpu_data.blas = images.add(f32rgba_image(&blas_data, "blas"));
-    gpu_data.mesh_data = images.add(i32_image(&cast_slice(&mesh_data), "mesh_data"));
+    gpu_data.mesh_data = images.add(i32_image(cast_slice(&mesh_data), "mesh_data"));
     gpu_data.mesh_data_reverse_map = mesh_data_reverse_map;
 }
 
@@ -344,7 +342,7 @@ pub fn i32_image(i32data: &[i32], label: &'static str) -> Image {
         },
         ..default()
     };
-    let data = cast_slice::<i32, u8>(&i32data).to_vec();
+    let data = cast_slice::<i32, u8>(i32data).to_vec();
     img.data.splice(0..data.len(), data);
     img
 }
@@ -370,7 +368,7 @@ pub fn f32rgba_image(vec4data: &[Vec4], label: &'static str) -> Image {
         },
         ..default()
     };
-    let data = cast_slice::<Vec4, u8>(&vec4data).to_vec();
+    let data = cast_slice::<Vec4, u8>(vec4data).to_vec();
     img.data.splice(0..data.len(), data);
     img
 }
@@ -450,7 +448,7 @@ pub fn get_bindings<'a>(
             },
         ])
     } else {
-        return None;
+        None
     }
 }
 

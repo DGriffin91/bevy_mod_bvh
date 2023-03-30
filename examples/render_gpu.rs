@@ -1,7 +1,6 @@
 use bevy::{
-    core_pipeline::{core_3d, fullscreen_vertex_shader::fullscreen_shader_vertex_state},
+    core_pipeline::core_3d,
     diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
-    pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS},
     prelude::*,
     render::{
         extract_component::{
@@ -11,16 +10,12 @@ use bevy::{
         render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, SlotInfo, SlotType},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntry, BindingResource, BindingType, BufferBindingType,
-            CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
-            Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
-            RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-            SamplerDescriptor, ShaderDefVal, ShaderStages, ShaderType, TextureFormat,
-            TextureSampleType, TextureViewDimension,
+            BindGroupLayoutEntry, BindingResource, BindingType, CachedRenderPipelineId, Operations,
+            PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, Sampler,
+            SamplerDescriptor, ShaderStages, ShaderType, TextureSampleType,
         },
         renderer::{RenderContext, RenderDevice},
-        texture::BevyDefault,
-        view::{ExtractedView, ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
+        view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
         RenderApp,
     },
     window::PresentMode,
