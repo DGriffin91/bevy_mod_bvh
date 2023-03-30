@@ -69,14 +69,15 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let query = scene_query(ray);
 
     if query.hit.distance != F32_MAX {
-        //var diffuse = vec4(0.0);
         var normal = vec3(0.0);
 
+        // could use query.hit.instance_idx to look up into your own material data
+        // given a texture that has references ordered the same way as tlas.aabbs
+        // see create_instance_mesh_data
+
         if query.static_tlas {
-            //diffuse = get_instance_diffuse(gpu_static_instance_data, query.hit.instance_idx);
             normal = get_surface_normal(static_instance_data, static_instance_mat, query.hit);
         } else {
-            //diffuse = get_instance_diffuse(gpu_dynamic_instance_data, query.hit.instance_idx);
             normal = get_surface_normal(dynamic_instance_data, dynamic_instance_mat, query.hit);
         }
 
