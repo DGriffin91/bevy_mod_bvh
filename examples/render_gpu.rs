@@ -163,7 +163,7 @@ impl Node for RayTraceNode {
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) else {
+        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) else {
             return Ok(());
         };
 
@@ -223,7 +223,7 @@ impl FromWorld for PostProcessPipeline {
         ];
 
         entries.append(
-            &mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12, 13]).to_vec(),
+            &mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]).to_vec(),
         );
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -233,7 +233,9 @@ impl FromWorld for PostProcessPipeline {
 
         let sampler = render_device.create_sampler(&SamplerDescriptor::default());
 
-        let shader = world.resource::<AssetServer>().load("raytrace.wgsl");
+        let shader = world
+            .resource::<AssetServer>()
+            .load("raytrace_example.wgsl");
 
         let pipeline_id = get_default_pipeline_desc(
             Vec::new(),

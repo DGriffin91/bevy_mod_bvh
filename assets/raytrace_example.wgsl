@@ -17,25 +17,27 @@ struct TraceSettings {
 @group(0) @binding(3)
 var<uniform> settings: TraceSettings;
 @group(0) @binding(4)
-var gpu_static_tlas_data: texture_2d<f32>;
-@group(0) @binding(5)
-var gpu_dynamic_tlas_data: texture_2d<f32>;
-@group(0) @binding(6)
-var mesh_data: texture_2d<i32>;
-@group(0) @binding(7)
 var vert_indices: texture_2d<i32>;
-@group(0) @binding(8)
+@group(0) @binding(5)
 var vert_pos: texture_2d<f32>;
-@group(0) @binding(9)
+@group(0) @binding(6)
 var vert_nor: texture_2d<f32>;
-@group(0) @binding(10)
+@group(0) @binding(7)
 var tri_nor: texture_2d<f32>;
-@group(0) @binding(11)
+@group(0) @binding(8)
 var blas: texture_2d<f32>;
+@group(0) @binding(9)
+var static_tlas_data: texture_2d<f32>;
+@group(0) @binding(10)
+var dynamic_tlas_data: texture_2d<f32>;
+@group(0) @binding(11)
+var static_instance_data: texture_2d<i32>;
 @group(0) @binding(12)
-var gpu_static_instance_data: texture_2d<f32>;
+var dynamic_instance_data: texture_2d<i32>;
 @group(0) @binding(13)
-var gpu_dynamic_instance_data: texture_2d<f32>;
+var static_instance_mat: texture_2d<f32>;
+@group(0) @binding(14)
+var dynamic_instance_mat: texture_2d<f32>;
 
 #import "tracing.wgsl"
 
@@ -72,10 +74,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
         if query.static_tlas {
             //diffuse = get_instance_diffuse(gpu_static_instance_data, query.hit.instance_idx);
-            normal = get_surface_normal(gpu_static_instance_data, query.hit);
+            normal = get_surface_normal(static_instance_data, static_instance_mat, query.hit);
         } else {
             //diffuse = get_instance_diffuse(gpu_dynamic_instance_data, query.hit.instance_idx);
-            normal = get_surface_normal(gpu_dynamic_instance_data, query.hit);
+            normal = get_surface_normal(dynamic_instance_data, dynamic_instance_mat, query.hit);
         }
 
         col = vec4(vec3(normal), 1.0);
@@ -85,8 +87,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     col = print_value(coord, col, 0, f32(settings.fps));
     col = print_value(coord, col, 1, f32(frame));
-    col = print_value(coord, col, 2, f32(get_tlas_max_length(gpu_static_tlas_data)));
-    col = print_value(coord, col, 3, f32(get_tlas_max_length(gpu_dynamic_tlas_data)));
+    col = print_value(coord, col, 2, f32(get_tlas_max_length(static_tlas_data)));
+    col = print_value(coord, col, 3, f32(get_tlas_max_length(dynamic_tlas_data)));
 
     return col;
 }

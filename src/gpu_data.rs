@@ -64,18 +64,18 @@ pub struct MeshData {
 // in hot paths on the GPU. Need to evaluate if this makes sense.
 #[derive(Resource, Clone)]
 pub struct GpuData {
-    //-shape_idx * instance_data_len is index into static/dynamic instance data
-    pub gpu_static_tlas_data: Handle<Image>,
-    pub gpu_dynamic_tlas_data: Handle<Image>,
+    pub mesh_data: Vec<MeshData>,
+    // use idx * len(MeshData)
+    pub mesh_data_reverse_map: HashMap<Handle<Mesh>, usize>,
+
+    // Uint idx flat as tri abcabcabc...
+    pub vert_indices: Handle<Image>,
 
     // Vec4 with w unused
     pub vert_pos: Handle<Image>,
     pub vert_nor: Handle<Image>,
     // precomputed triangle normals vec4 with w as distance to center of AABB
     pub tri_nor: Handle<Image>,
-
-    // Uint idx flat as tri abcabcabc...
-    pub vert_indices: Handle<Image>,
 
     // All BVH data is:
     // Vec4Vec4 aabb min/max = xyz,
@@ -85,48 +85,37 @@ pub struct GpuData {
     //-shape_idx * 3 is index into vert_indices
     pub blas: Handle<Image>,
 
-    // all i32
-    // index_start, pos_start, blas_start, blas_count
-    pub mesh_data: Handle<Image>,
+    //-shape_idx * instance_data_len is index into static/dynamic instance data
+    pub static_tlas_data: Handle<Image>,
+    pub dynamic_tlas_data: Handle<Image>,
 
-    // use idx * len(MeshData)
-    pub mesh_data_reverse_map: HashMap<Handle<Mesh>, usize>,
+    // vert_index_start, vert_pos_start, blas_start, blas_count
+    pub static_instance_data: Handle<Image>,
+    pub dynamic_instance_data: Handle<Image>,
 
-    /*
-        TODO the user should provide these in the order of tlas.0.aabbs
-        So that BVH traversal will point to the correct instance index
-        InstanceData {
-            index into mesh data
-            index into material data
-            transform/model (probably trans.compute_matrix().inverse())
-        }
-    */
-    // currently diffuse rgba, emit rgba, i32 index into mesh_data, inv mat: Vec4Vec4Vec4Vec4
-    pub gpu_static_instance_data: Handle<Image>,
-    pub gpu_dynamic_instance_data: Handle<Image>,
+    //inv mat: Vec4Vec4Vec4Vec4
+    pub static_instance_mat: Handle<Image>,
+    pub dynamic_instance_mat: Handle<Image>,
 }
 
 fn init_gpu_data(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(GpuData {
-        gpu_static_tlas_data: images
-            .add(f32rgba_image(&[Vec4::ZERO], "uninit_gpu_static_tlas_data")),
-        gpu_dynamic_tlas_data: images
-            .add(f32rgba_image(&[Vec4::ZERO], "uninit_gpu_dynamic_tlas_data")),
+        mesh_data: Vec::new(),
+        mesh_data_reverse_map: HashMap::new(),
+        vert_indices: images.add(i32_image(&[0], "uninit_vert_indices")),
         vert_pos: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_positions")),
         vert_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_normals")),
         tri_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_tri_normals")),
-        vert_indices: images.add(i32_image(&[0], "uninit_vert_indices")),
         blas: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_blas")),
-        mesh_data: images.add(i32_image(&[0], "uninit_mesh_data")),
-        mesh_data_reverse_map: HashMap::new(),
-        gpu_static_instance_data: images.add(f32rgba_image(
-            &[Vec4::ZERO],
-            "uninit_gpu_static_instance_data",
-        )),
-        gpu_dynamic_instance_data: images.add(f32rgba_image(
-            &[Vec4::ZERO],
-            "uninit_gpu_dynamic_instance_data",
-        )),
+        static_tlas_data: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_static_tlas_data")),
+        dynamic_tlas_data: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_tlas_data")),
+        static_instance_data: images
+            .add(f32rgba_image(&[Vec4::ZERO], "uninit_static_instance_data")),
+        dynamic_instance_data: images
+            .add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_instance_data")),
+        static_instance_mat: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_static_instance_mat")),
+        dynamic_instance_mat: images
+            .add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_instance_mat")),
     })
 }
 
@@ -221,7 +210,7 @@ fn update_vertices_indices_blas_data(
     gpu_data.vert_nor = images.add(f32rgba_image(&nor_data, "vert_normals"));
     gpu_data.tri_nor = images.add(f32rgba_image(&tri_nor_data, "tri_normals"));
     gpu_data.blas = images.add(f32rgba_image(&blas_data, "blas"));
-    gpu_data.mesh_data = images.add(i32_image(cast_slice(&mesh_data), "mesh_data"));
+    gpu_data.mesh_data = mesh_data;
     gpu_data.mesh_data_reverse_map = mesh_data_reverse_map;
 }
 
@@ -235,12 +224,12 @@ fn update_tlas_data(
     if static_tlas.is_changed() {
         if let Some(bvh) = &static_tlas.0.bvh {
             dbg!("update_static_tlas");
-            gpu_data.gpu_static_tlas_data = images.add(create_gpu_tlas_data(bvh, "static_tlas"));
+            gpu_data.static_tlas_data = images.add(create_gpu_tlas_data(bvh, "static_tlas"));
         }
     }
     if dynamic_tlas.is_changed() {
         if let Some(bvh) = &dynamic_tlas.0.bvh {
-            gpu_data.gpu_dynamic_tlas_data = images.add(create_gpu_tlas_data(bvh, "dynamic_tlas"));
+            gpu_data.dynamic_tlas_data = images.add(create_gpu_tlas_data(bvh, "dynamic_tlas"));
         }
     }
 }
@@ -271,54 +260,101 @@ fn update_instance_data(
     static_tlas: Res<StaticTLASData>,
     dynamic_tlas: Res<DynamicTLASData>,
     mut gpu_data: ResMut<GpuData>,
-    mesh_entities: Query<(&Handle<Mesh>, &GlobalTransform, &Handle<StandardMaterial>)>,
-    materials: Res<Assets<StandardMaterial>>,
+    mesh_entities: Query<(&Handle<Mesh>, &GlobalTransform)>,
     mut images: ResMut<Assets<Image>>,
+    blas: Res<BLAS>,
 ) {
-    if static_tlas.is_changed() {
+    // since we are storing the blas idx in the instance data
+    // we need to update both static & dynamic if blas.is_changed()
+
+    // TODO we could just run create_instance_mat_data if the
+    // TLAS didn't have any addition/removals/order changes
+    // and all that changed was the tlas was rebuild with the same AABBs
+    // Would need to detect (probably in check_tlas_need_update()) if
+    // there were only transform changes. If thats the case we would use
+    // the previous AABB order and just rebuild from that order
+    // then signal this function to only update the mat data
+    if static_tlas.is_changed() || blas.is_changed() {
         dbg!("GpuStaticInstanceData");
-        gpu_data.gpu_static_instance_data = images.add(create_instance_data(
+        create_instance_mat_data(
             &static_tlas.0,
             &mesh_entities,
-            &materials,
-            &gpu_data,
-            "gpu_static_instance_data",
-        ));
+            &mut gpu_data,
+            &mut images,
+            false,
+        );
+        create_instance_mesh_data(
+            &static_tlas.0,
+            &mesh_entities,
+            &mut gpu_data,
+            &mut images,
+            false,
+        );
     }
-    if dynamic_tlas.is_changed() {
-        gpu_data.gpu_dynamic_instance_data = images.add(create_instance_data(
+    if dynamic_tlas.is_changed() || blas.is_changed() {
+        create_instance_mat_data(
             &dynamic_tlas.0,
             &mesh_entities,
-            &materials,
-            &gpu_data,
-            "gpu_dynamic_instance_data",
-        ));
+            &mut gpu_data,
+            &mut images,
+            true,
+        );
+        create_instance_mesh_data(
+            &dynamic_tlas.0,
+            &mesh_entities,
+            &mut gpu_data,
+            &mut images,
+            true,
+        );
     }
 }
 
-fn create_instance_data(
+fn create_instance_mesh_data(
     tlas: &TLAS,
-    mesh_entities: &Query<(&Handle<Mesh>, &GlobalTransform, &Handle<StandardMaterial>)>,
-    materials: &Assets<StandardMaterial>,
-    gpu_data: &GpuData,
-    label: &'static str,
-) -> Image {
-    let mut instance_gpu_data = Vec::new();
+    mesh_entities: &Query<(&Handle<Mesh>, &GlobalTransform)>,
+    gpu_data: &mut GpuData,
+    images: &mut Assets<Image>,
+    dynamic: bool,
+) {
+    let mut instance_mesh_data = Vec::new();
     for item in &tlas.aabbs {
-        let (mesh_h, trans, material_h) = mesh_entities.get(item.entity).unwrap();
-        let material = materials.get(material_h).unwrap();
-        // currently diffuse rgba, emit rgba, index into mesh_data, inv mat: Vec4Vec4Vec4Vec4
-        instance_gpu_data.push(cast(material.base_color.as_linear_rgba_f32()));
-        instance_gpu_data.push(cast(material.emissive.as_linear_rgba_f32()));
-        let mesh_data_idx = gpu_data.mesh_data_reverse_map[mesh_h];
-        instance_gpu_data.push(Vec4::new(cast(mesh_data_idx as i32), 0.0, 0.0, 0.0));
-        let inv_mat = trans.compute_matrix().inverse();
-        instance_gpu_data.push(inv_mat.x_axis);
-        instance_gpu_data.push(inv_mat.y_axis);
-        instance_gpu_data.push(inv_mat.z_axis);
-        instance_gpu_data.push(inv_mat.w_axis);
+        let (mesh_h, _trans) = mesh_entities.get(item.entity).unwrap();
+        let mesh_data = gpu_data.mesh_data[gpu_data.mesh_data_reverse_map[mesh_h]];
+        instance_mesh_data.push(mesh_data);
     }
-    f32rgba_image(&instance_gpu_data, label)
+    let instance_data_image =
+        images.add(i32_image(cast_slice(&instance_mesh_data), "instance_data"));
+    if dynamic {
+        gpu_data.dynamic_instance_data = instance_data_image;
+    } else {
+        gpu_data.static_instance_data = instance_data_image;
+    }
+}
+
+fn create_instance_mat_data(
+    tlas: &TLAS,
+    mesh_entities: &Query<(&Handle<Mesh>, &GlobalTransform)>,
+    gpu_data: &mut GpuData,
+    images: &mut Assets<Image>,
+    dynamic: bool,
+) {
+    let mut instance_mat_data = Vec::new();
+    for item in &tlas.aabbs {
+        let (_mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
+
+        let inv_mat = trans.compute_matrix().inverse();
+        instance_mat_data.push(inv_mat.x_axis);
+        instance_mat_data.push(inv_mat.y_axis);
+        instance_mat_data.push(inv_mat.z_axis);
+        instance_mat_data.push(inv_mat.w_axis);
+    }
+    let instance_mat_data_image =
+        images.add(f32rgba_image(&instance_mat_data, "instance_mat_data"));
+    if dynamic {
+        gpu_data.dynamic_instance_mat = instance_mat_data_image;
+    } else {
+        gpu_data.static_instance_mat = instance_mat_data_image;
+    }
 }
 
 pub fn i32_image(i32data: &[i32], label: &'static str) -> Image {
@@ -380,71 +416,77 @@ pub fn extract_gpu_data(mut commands: Commands, gpu_data: Extract<Res<GpuData>>)
 pub fn get_bindings<'a>(
     images: &'a RenderAssets<Image>,
     gpu_data: &'a GpuData,
-    bindings: [u32; 10],
-) -> Option<[BindGroupEntry<'a>; 10]> {
+    bindings: [u32; 11],
+) -> Option<[BindGroupEntry<'a>; 11]> {
     if let (
-        Some(gpu_static_tlas_data),
-        Some(gpu_dynamic_tlas_data),
-        Some(mesh_data),
         Some(vert_indices),
         Some(vert_positions),
         Some(vert_normals),
         Some(tri_normals),
         Some(blas),
-        Some(gpu_static_instance_data),
-        Some(gpu_dynamic_instance_data),
+        Some(static_tlas_data),
+        Some(dynamic_tlas_data),
+        Some(static_instance_data),
+        Some(dynamic_instance_data),
+        Some(static_instance_mat),
+        Some(dynamic_instance_mat),
     ) = (
-        images.get(&gpu_data.gpu_static_tlas_data),
-        images.get(&gpu_data.gpu_dynamic_tlas_data),
-        images.get(&gpu_data.mesh_data),
         images.get(&gpu_data.vert_indices),
         images.get(&gpu_data.vert_pos),
         images.get(&gpu_data.vert_nor),
         images.get(&gpu_data.tri_nor),
         images.get(&gpu_data.blas),
-        images.get(&gpu_data.gpu_static_instance_data),
-        images.get(&gpu_data.gpu_dynamic_instance_data),
+        images.get(&gpu_data.static_tlas_data),
+        images.get(&gpu_data.dynamic_tlas_data),
+        images.get(&gpu_data.static_instance_data),
+        images.get(&gpu_data.dynamic_instance_data),
+        images.get(&gpu_data.static_instance_mat),
+        images.get(&gpu_data.dynamic_instance_mat),
     ) {
         Some([
             BindGroupEntry {
                 binding: bindings[0],
-                resource: BindingResource::TextureView(&gpu_static_tlas_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[1],
-                resource: BindingResource::TextureView(&gpu_dynamic_tlas_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[2],
-                resource: BindingResource::TextureView(&mesh_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[3],
                 resource: BindingResource::TextureView(&vert_indices.texture_view),
             },
             BindGroupEntry {
-                binding: bindings[4],
+                binding: bindings[1],
                 resource: BindingResource::TextureView(&vert_positions.texture_view),
             },
             BindGroupEntry {
-                binding: bindings[5],
+                binding: bindings[2],
                 resource: BindingResource::TextureView(&vert_normals.texture_view),
             },
             BindGroupEntry {
-                binding: bindings[6],
+                binding: bindings[3],
                 resource: BindingResource::TextureView(&tri_normals.texture_view),
             },
             BindGroupEntry {
-                binding: bindings[7],
+                binding: bindings[4],
                 resource: BindingResource::TextureView(&blas.texture_view),
             },
             BindGroupEntry {
+                binding: bindings[5],
+                resource: BindingResource::TextureView(&static_tlas_data.texture_view),
+            },
+            BindGroupEntry {
+                binding: bindings[6],
+                resource: BindingResource::TextureView(&dynamic_tlas_data.texture_view),
+            },
+            BindGroupEntry {
+                binding: bindings[7],
+                resource: BindingResource::TextureView(&static_instance_data.texture_view),
+            },
+            BindGroupEntry {
                 binding: bindings[8],
-                resource: BindingResource::TextureView(&gpu_static_instance_data.texture_view),
+                resource: BindingResource::TextureView(&dynamic_instance_data.texture_view),
             },
             BindGroupEntry {
                 binding: bindings[9],
-                resource: BindingResource::TextureView(&gpu_dynamic_instance_data.texture_view),
+                resource: BindingResource::TextureView(&static_instance_mat.texture_view),
+            },
+            BindGroupEntry {
+                binding: bindings[10],
+                resource: BindingResource::TextureView(&dynamic_instance_mat.texture_view),
             },
         ])
     } else {
@@ -452,18 +494,19 @@ pub fn get_bindings<'a>(
     }
 }
 
-pub fn get_bind_group_layout_entries(bindings: [u32; 10]) -> [BindGroupLayoutEntry; 10] {
+pub fn get_bind_group_layout_entries(bindings: [u32; 11]) -> [BindGroupLayoutEntry; 11] {
     [
-        layout_entry_d2(bindings[0], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[0], TextureSampleType::Sint),
         layout_entry_d2(bindings[1], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[2], TextureSampleType::Sint),
-        layout_entry_d2(bindings[3], TextureSampleType::Sint),
+        layout_entry_d2(bindings[2], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[3], TextureSampleType::Float { filterable: false }),
         layout_entry_d2(bindings[4], TextureSampleType::Float { filterable: false }),
         layout_entry_d2(bindings[5], TextureSampleType::Float { filterable: false }),
         layout_entry_d2(bindings[6], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[7], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[8], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[7], TextureSampleType::Sint),
+        layout_entry_d2(bindings[8], TextureSampleType::Sint),
         layout_entry_d2(bindings[9], TextureSampleType::Float { filterable: false }),
+        layout_entry_d2(bindings[10], TextureSampleType::Float { filterable: false }),
     ]
 }
 
