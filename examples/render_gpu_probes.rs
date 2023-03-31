@@ -311,20 +311,21 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
     let cascade_x = 8;
     let cascade_y = 8;
     let cascade_z = 8;
-    let size = Extent3d {
+    let size = 12;
+    let output_size = Extent3d {
         width: 1024,
         height: 256,
         depth_or_array_layers: 1,
     };
     let target_size = Extent3d {
-        width: cascade_x * cascade_y,
-        height: cascade_z,
+        width: cascade_x * cascade_y * size,
+        height: cascade_z * size,
         depth_or_array_layers: 1,
     };
     let mut sh_tex_1 = Image {
         texture_descriptor: TextureDescriptor {
             label: Some("sh_tex_1"),
-            size: size.clone(),
+            size: output_size.clone(),
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -335,11 +336,11 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
         sampler_descriptor: ImageSampler::nearest(),
         ..default()
     };
-    sh_tex_1.resize(size);
+    sh_tex_1.resize(output_size);
     let mut sh_tex_2 = Image {
         texture_descriptor: TextureDescriptor {
             label: Some("sh_tex_2"),
-            size: size.clone(),
+            size: output_size.clone(),
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -350,7 +351,7 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
         sampler_descriptor: ImageSampler::nearest(),
         ..default()
     };
-    sh_tex_2.resize(size);
+    sh_tex_2.resize(output_size);
     let mut target_tex = Image {
         texture_descriptor: TextureDescriptor {
             label: Some("probe_target_tex"),
@@ -483,12 +484,12 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
         ..default()
     });
 
-    //commands.spawn(SceneBundle {
-    //    scene: asset_server.load(
-    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
-    //    ),
-    //    ..default()
-    //});
+    commands.spawn(SceneBundle {
+        scene: asset_server.load(
+            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+        ),
+        ..default()
+    });
 }
 
 fn set_sponza_tlas(

@@ -117,42 +117,43 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let cx = 8;
     let cy = 8;
     let cz = 8;
+    let size = 12;
 
-    let probe_n = icoord.x + icoord.y * cx * cy;
-    let probe_idx = vec3<i32>(probe_n % cx, (probe_n / cx) % cy, probe_n / (cx * cy));
+    let id = icoord.x + icoord.y * cx * cy * size;
+    let xy = vec2<i32>(icoord.x % size, icoord.y % size);
 
-    let ws_pos = (vec3<f32>(probe_idx) + offset) * probe_spacing;
+    let probe_ls = vec3<i32>((icoord.x / size) % cx, icoord.x / (cx * size), icoord.y / size);
+
+    let probe_ws = (vec3<f32>(probe_ls) + offset) * probe_spacing;
 
 
     
 
-    let size = 12;
     let fsize = f32(size);
 
     //let x = odd_frame % size;
     //let y = (odd_frame / size) % size;
 
 
-    for (var y = 0; y < size; y += 1) { 
-        for (var x = 0; x < size; x += 1) {
-            let fpos = vec2(f32(x), f32(y));
-            let v = fpos / fsize;
-            let dir = oct_decode_n(v, fsize, 1.0);
 
-            var ray: Ray;
-            ray.origin = ws_pos;
-            ray.direction = dir;
-            ray.inv_direction = 1.0 / ray.direction;
+    let fpos = vec2<f32>(xy);
+    let v = fpos / fsize;
+    let dir = oct_decode_n(v, fsize, 1.0);
 
-            let query = scene_query(ray);
+    var ray: Ray;
+    ray.origin = probe_ws;
+    ray.direction = dir;
+    ray.inv_direction = 1.0 / ray.direction;
+
+    let query = scene_query(ray);
 
 
-            textureStore(next_sh_tex, vec2(x + probe_idx.x * size + probe_idx.y * size * 8, y + probe_idx.z * size), vec4(vec3(1.0 - 1.0/query.hit.distance), 1.0));
+    textureStore(next_sh_tex, icoord, vec4(vec3(1.0 - 1.0/query.hit.distance), 1.0));
 
-            //let ch = print_value_custom(fpos, vec2(0.0), vec2(4.0, 8.0), f32(probe_n), 4.0, 0.0);
-            //textureStore(next_sh_tex, vec2(x + probe_idx.x * size + probe_idx.y * size * 8, y + probe_idx.z * size), vec4(vec3(ch), 1.0));
-        }
-    }
+    //let ch = print_value_custom(fpos, vec2(0.0), vec2(6.0, 8.0), f32(probe_id), 3.0, 0.0);
+    //textureStore(next_sh_tex, icoord, vec4(vec3(ch), 1.0));
+    //textureStore(next_sh_tex, icoord, vec4(fpos / fsize, 0.0, 1.0));
+
     
 
     return vec4(0.0);
