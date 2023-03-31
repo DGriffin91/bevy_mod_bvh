@@ -1,6 +1,6 @@
 use bevy::{
     core_pipeline::core_3d,
-    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
+    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     reflect::TypeUuid,
     render::{
@@ -18,7 +18,7 @@ use bevy::{
             TextureViewDescriptor, TextureViewDimension,
         },
         renderer::{RenderContext, RenderDevice},
-        texture::CachedTexture,
+        texture::{CachedTexture, ImageSampler},
         view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
         Extract, RenderApp,
     },
@@ -54,6 +54,7 @@ fn main() {
         .add_plugin(GPUDataPlugin)
         .add_plugin(CameraControllerPlugin)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(MaterialPlugin::<CustomMaterial>::default())
         .add_startup_system(setup)
         .add_systems((cube_rotator, update_settings).in_base_set(CoreSet::Update))
@@ -307,12 +308,12 @@ impl ProbeTextures {
 
 pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let values_per_probe = 9;
-    let cascade_x = 16;
-    let cascade_y = 16;
-    let cascade_z = 16;
+    let cascade_x = 8;
+    let cascade_y = 8;
+    let cascade_z = 8;
     let size = Extent3d {
-        width: values_per_probe * cascade_x * cascade_z,
-        height: cascade_y,
+        width: 1024,
+        height: 256,
         depth_or_array_layers: 1,
     };
     let target_size = Extent3d {
@@ -331,6 +332,7 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
             usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         },
+        sampler_descriptor: ImageSampler::nearest(),
         ..default()
     };
     sh_tex_1.resize(size);
@@ -345,6 +347,7 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
             usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         },
+        sampler_descriptor: ImageSampler::nearest(),
         ..default()
     };
     sh_tex_2.resize(size);
@@ -361,7 +364,7 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
         },
         ..default()
     };
-    target_tex.resize(size);
+    target_tex.resize(target_size);
 
     commands.insert_resource(ProbeTextures {
         sh_tex: [images.add(sh_tex_1), images.add(sh_tex_2)],
@@ -479,12 +482,13 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
         ),
         ..default()
     });
-    commands.spawn(SceneBundle {
-        scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
-        ),
-        ..default()
-    });
+
+    //commands.spawn(SceneBundle {
+    //    scene: asset_server.load(
+    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+    //    ),
+    //    ..default()
+    //});
 }
 
 fn set_sponza_tlas(

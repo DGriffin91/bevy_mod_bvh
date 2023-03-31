@@ -21,7 +21,7 @@ fn fragment(in: FragmentInput) -> @location(0) vec4<f32> {
     let coord = in.position.xy;
     let uv = coord / view.viewport.zw;
 
-    let col = 1.0 - 1.0 / textureSample(texture, texture_sampler, uv).rgb;
+    let col = textureSample(texture, texture_sampler, uv).rgb;
 
     return vec4(col, 1.0);
 }
