@@ -94,3 +94,64 @@ fn shEvaluateDiffuseL1Geomerics(sh: vec4<f32>, n: vec3<f32>) -> f32 {
 
 	return R0 * (a + (1.0 - a) * (p + 1.0) * pow(q, p));
 }
+
+// http://jcgt.org/published/0003/02/01/
+// https://github.com/RomkoSI/G3D/blob/master/data-files/shader/octahedral.glsl
+
+/** Assumes that v is a unit vector. The result is an octahedral vector on the [-1, +1] square. */
+fn oct_encode(v: vec3<f32>) -> vec2<f32> {
+    let l1norm = abs(v.x) + abs(v.y) + abs(v.z);
+    var result = v.xy * (1.0 / l1norm);
+    if (v.z < 0.0) {
+        result = (1.0 - abs(result.yx)) * signNotZeroV2(result.xy);
+    }
+    return result;
+}
+
+// output uv 0 .. 1
+fn oct_encode_n(v: vec3<f32>, size: f32, border: f32) -> vec2<f32> {
+    let border_factor = 1.0 + ((border * 2.0) / size);
+    return (oct_encode(v) / border_factor + 1.0) * 0.5;
+}
+
+/** Returns a unit vector. Argument o is an octahedral vector packed via octEncode,
+    on the [-1, +1] square*/
+fn oct_decode(o: vec2<f32>) -> vec3<f32> {
+    var v = vec3(o.x, o.y, 1.0 - abs(o.x) - abs(o.y));
+    if (v.z < 0.0) {
+        let tmp = (1.0 - abs(v.yx)) * signNotZeroV2(v.xy);
+        v.x = tmp.x;
+        v.y = tmp.y;
+    }
+    return normalize(v);
+}
+
+// input uv 0 .. 1, tot size in px (inc border), border 1.0 would be 1 px border on all sides
+fn oct_decode_n(o: vec2<f32>, size: f32, border: f32) -> vec3<f32> {
+    let border_factor = 1.0 + ((border * 2.0) / size);
+    return oct_decode((o * 2.0 - 1.0) * border_factor);
+}
+
+fn signNotZero(k: f32) -> f32 {
+    return select(-1.0, 1.0, k >= 0.0);
+}
+
+fn signNotZeroV2(v: vec2<f32>) -> vec2<f32> {
+    return vec2(signNotZero(v.x), signNotZero(v.y));
+}
+
+fn square(x: f32) -> f32 {
+    return x * x;
+}
+
+fn square_vec2(x: vec2<f32>) -> vec2<f32> {
+    return x * x;
+}
+
+fn square_vec3(x: vec3<f32>) -> vec3<f32> {
+    return x * x;
+}
+
+fn cube(x: f32) -> f32 {
+    return x * x * x;
+}

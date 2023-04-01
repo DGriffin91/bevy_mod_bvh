@@ -1,19 +1,27 @@
+use std::f32::consts::PI;
+
 use bevy::{
     core_pipeline::core_3d,
     diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    math::vec3,
+    pbr::{
+        MaterialPipeline, MaterialPipelineKey, StandardMaterialFlags, PBR_PREPASS_SHADER_HANDLE,
+    },
     prelude::*,
     reflect::TypeUuid,
     render::{
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
+        mesh::MeshVertexBufferLayout,
         render_asset::RenderAssets,
         render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, SlotInfo, SlotType},
         render_resource::{
-            AsBindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType,
-            CachedRenderPipelineId, Extent3d, Operations, PipelineCache, RenderPassColorAttachment,
-            RenderPassDescriptor, ShaderRef, ShaderStages, ShaderType, StorageTextureAccess,
+            AsBindGroup, AsBindGroupShaderType, BindGroupDescriptor, BindGroupEntry,
+            BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource,
+            BindingType, CachedRenderPipelineId, Extent3d, Face, Operations, PipelineCache,
+            RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, ShaderRef,
+            ShaderStages, ShaderType, SpecializedMeshPipelineError, StorageTextureAccess,
             TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
             TextureViewDescriptor, TextureViewDimension,
         },
@@ -35,6 +43,11 @@ use bevy_mod_bvh::{
 
 fn main() {
     App::new()
+        .insert_resource(ClearColor(Color::rgb(1.75, 1.9, 1.99)))
+        .insert_resource(AmbientLight {
+            color: Color::rgb(1.0, 1.0, 1.0),
+            brightness: 0.0,
+        })
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
@@ -56,11 +69,14 @@ fn main() {
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(MaterialPlugin::<CustomMaterial>::default())
-        .add_startup_system(setup)
+        .add_plugin(MaterialPlugin::<CustomStandardMaterial>::default())
         .add_systems((cube_rotator, update_settings).in_base_set(CoreSet::Update))
-        .add_startup_system(load_sponza)
-        .add_system(set_sponza_tlas.before(BVHSet::BlasTlas))
-        .add_system(swap_custom_material)
+        .add_startup_systems((setup, load_sponza).chain())
+        .add_systems(
+            (proc_sponza_scene, swap_standard_material, set_sponza_tlas)
+                .chain()
+                .before(BVHSet::BlasTlas),
+        )
         .run();
 }
 
@@ -157,11 +173,11 @@ impl Node for RayTraceNode {
             return Ok(());
         };
 
-        let prev_image = images
-            .get(&probe_textures.sh_tex[probe_textures.previous(self.frame)])
+        let prev_tex = images
+            .get(&probe_textures.probe_tex[probe_textures.previous(self.frame)])
             .unwrap();
-        let next_image = images
-            .get(&probe_textures.sh_tex[probe_textures.next(self.frame)])
+        let next_tex = images
+            .get(&probe_textures.probe_tex[probe_textures.next(self.frame)])
             .unwrap();
         let target_tex = images.get(&probe_textures.target_tex).unwrap();
 
@@ -175,16 +191,16 @@ impl Node for RayTraceNode {
                 resource: settings_binding.clone(),
             },
             BindGroupEntry {
-                binding: 2,
-                resource: BindingResource::TextureView(&prev_image.texture_view),
+                binding: 13,
+                resource: BindingResource::TextureView(&prev_tex.texture_view),
             },
             BindGroupEntry {
-                binding: 3,
-                resource: BindingResource::TextureView(&next_image.texture_view),
+                binding: 14,
+                resource: BindingResource::TextureView(&next_tex.texture_view),
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) else {
+        let Some(rt_bindings) = get_bindings(images, gpu_data, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) else {
             return Ok(());
         };
 
@@ -239,7 +255,7 @@ impl FromWorld for PostProcessPipeline {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 2,
+                binding: 13,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::StorageTexture {
                     access: StorageTextureAccess::ReadOnly,
@@ -249,7 +265,7 @@ impl FromWorld for PostProcessPipeline {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 3,
+                binding: 14,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::StorageTexture {
                     access: StorageTextureAccess::WriteOnly,
@@ -261,7 +277,7 @@ impl FromWorld for PostProcessPipeline {
         ];
 
         entries.append(
-            &mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]).to_vec(),
+            &mut get_bind_group_layout_entries([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).to_vec(),
         );
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -289,7 +305,7 @@ impl FromWorld for PostProcessPipeline {
 // not using cached texture so we can access on materials
 #[derive(Resource, Clone)]
 pub struct ProbeTextures {
-    pub sh_tex: [Handle<Image>; 2],
+    pub probe_tex: [Handle<Image>; 2],
     pub target_tex: Handle<Image>,
 }
 
@@ -307,24 +323,23 @@ impl ProbeTextures {
 }
 
 pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let values_per_probe = 9;
-    let cascade_x = 8;
-    let cascade_y = 8;
-    let cascade_z = 8;
-    let size = 12;
+    let cascade_x = 18;
+    let cascade_y = 18;
+    let cascade_z = 18;
+    let size = 6;
     let output_size = Extent3d {
-        width: 1024,
-        height: 256,
+        width: cascade_x * cascade_y * size,
+        height: cascade_z * size * 2, //*2 since the color data is on the bottom half
         depth_or_array_layers: 1,
     };
-    let target_size = Extent3d {
+    let invocation_size = Extent3d {
         width: cascade_x * cascade_y * size,
         height: cascade_z * size,
         depth_or_array_layers: 1,
     };
-    let mut sh_tex_1 = Image {
+    let mut probe_tex1 = Image {
         texture_descriptor: TextureDescriptor {
-            label: Some("sh_tex_1"),
+            label: Some("probe_tex1"),
             size: output_size.clone(),
             mip_level_count: 1,
             sample_count: 1,
@@ -333,29 +348,18 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
             usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         },
-        sampler_descriptor: ImageSampler::nearest(),
+        sampler_descriptor: ImageSampler::linear(),
         ..default()
     };
-    sh_tex_1.resize(output_size);
-    let mut sh_tex_2 = Image {
-        texture_descriptor: TextureDescriptor {
-            label: Some("sh_tex_2"),
-            size: output_size.clone(),
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba16Float,
-            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        sampler_descriptor: ImageSampler::nearest(),
-        ..default()
-    };
-    sh_tex_2.resize(output_size);
+    probe_tex1.resize(output_size);
+
+    let mut probe_tex2 = probe_tex1.clone();
+    probe_tex2.texture_descriptor.label = Some("probe_tex2");
+
     let mut target_tex = Image {
         texture_descriptor: TextureDescriptor {
             label: Some("probe_target_tex"),
-            size: target_size.clone(),
+            size: invocation_size.clone(),
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -365,10 +369,10 @@ pub fn prepare_textures(mut commands: Commands, mut images: ResMut<Assets<Image>
         },
         ..default()
     };
-    target_tex.resize(target_size);
+    target_tex.resize(invocation_size);
 
     commands.insert_resource(ProbeTextures {
-        sh_tex: [images.add(sh_tex_1), images.add(sh_tex_2)],
+        probe_tex: [images.add(probe_tex1), images.add(probe_tex2)],
         target_tex: images.add(target_tex),
     });
 }
@@ -379,24 +383,24 @@ pub fn extract_probe_textures(mut commands: Commands, probe_textures: Extract<Re
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 struct TraceSettings {
+    sun_direction: Vec3,
     frame: u32,
     fps: f32,
+    render_depth_this_frame: u32,
 }
-
-/// set up a simple 3D scene
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // plane
-    commands
-        .spawn(MaterialMeshBundle {
-            mesh: meshes.add(shape::Plane::from_size(5.0).into()),
-            material: materials.add(Color::rgb(0.3, 0.5, 0.3).into()),
-            ..default()
-        })
-        .insert(StaticTLAS);
+    //commands
+    //    .spawn(MaterialMeshBundle {
+    //        mesh: meshes.add(shape::Plane::from_size(5.0).into()),
+    //        material: materials.add(Color::rgb(0.3, 0.5, 0.3).into()),
+    //        ..default()
+    //    })
+    //    .insert(StaticTLAS);
     // cube
     commands
         .spawn(MaterialMeshBundle {
@@ -433,7 +437,27 @@ fn setup(
             ..default()
         })
         .insert(CameraController::default())
-        .insert(TraceSettings { frame: 0, fps: 0.0 });
+        .insert(TraceSettings {
+            /*
+            x = cos(-0.43*pi)*cos(-0.08*pi)
+            y = sin(-0.43*pi)*cos(-0.08*pi)
+            z = sin(0.0)
+
+            for transform: Transform::from_rotation(Quat::from_euler(
+                EulerRot::XYZ,
+                PI * -0.43,
+                PI * -0.08,
+                0.0,
+            )),
+
+            idk if it's correct yet
+
+             */
+            sun_direction: vec3(0.2112898703307094, -0.9452565422770496, 0.0),
+            frame: 0,
+            fps: 0.0,
+            render_depth_this_frame: 1,
+        });
 }
 
 impl Material for CustomMaterial {
@@ -449,9 +473,12 @@ pub struct CustomMaterial {
     #[texture(0)]
     #[sampler(1)]
     pub probe_texture: Handle<Image>,
+    #[texture(2)]
+    #[sampler(3)]
+    pub probe_texture2: Handle<Image>,
 }
 
-fn swap_custom_material(
+fn _swap_custom_material(
     mut commands: Commands,
     mut material_events: EventReader<AssetEvent<StandardMaterial>>,
     entites: Query<(Entity, &Handle<StandardMaterial>)>,
@@ -464,7 +491,8 @@ fn swap_custom_material(
             _ => continue,
         };
         let custom_mat_h = custom_materials.add(CustomMaterial {
-            probe_texture: probe_textures.sh_tex[0].clone(), //TODO use both so we update every frame
+            probe_texture: probe_textures.probe_tex[0].clone(),
+            probe_texture2: probe_textures.probe_tex[1].clone(),
         });
         for (entity, entity_mat_h) in entites.iter() {
             if entity_mat_h == handle {
@@ -477,19 +505,102 @@ fn swap_custom_material(
 }
 
 fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(SceneBundle {
-        scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Main_glTF_002.gltf#Scene0",
-        ),
-        ..default()
-    });
+    let _without_textures =
+        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Main_glTF_002.gltf#Scene0";
+    let with_textures = "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/main_sponza/NewSponza_Main_glTF_002_no_cameras.gltf#Scene0";
+    let _low_poly =
+        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/main_sponza/untitled.glb#Scene0";
+    commands
+        .spawn(SceneBundle {
+            scene: asset_server.load(with_textures),
+            ..default()
+        })
+        .insert(PostProcScene);
+    // Sun
+    commands
+        .spawn(DirectionalLightBundle {
+            transform: Transform::from_rotation(Quat::from_euler(
+                EulerRot::XYZ,
+                PI * -0.43,
+                PI * -0.08,
+                0.0,
+            )),
+            directional_light: DirectionalLight {
+                color: Color::rgb(1.0, 1.0, 0.99),
+                illuminance: 400000.0,
+                shadows_enabled: true,
+                shadow_depth_bias: 0.3,
+                shadow_normal_bias: 0.7,
+            },
+            ..default()
+        })
+        .insert(GrifLight);
+    //commands.spawn(SceneBundle {
+    //    scene: asset_server.load(
+    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+    //    ),
+    //    ..default()
+    //}).insert(PostProcScene);
+}
 
-    commands.spawn(SceneBundle {
-        scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+pub fn all_children<F: FnMut(Entity)>(
+    children: &Children,
+    children_query: &Query<&Children>,
+    closure: &mut F,
+) {
+    for child in children {
+        if let Ok(children) = children_query.get(*child) {
+            all_children(children, children_query, closure);
+        }
+        closure(*child);
+    }
+}
+
+#[derive(Component)]
+pub struct GrifLight;
+
+#[derive(Component)]
+pub struct PostProcScene;
+
+#[allow(clippy::type_complexity)]
+pub fn proc_sponza_scene(
+    mut commands: Commands,
+    flip_normals_query: Query<Entity, With<PostProcScene>>,
+    children_query: Query<&Children>,
+    has_std_mat: Query<&Handle<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    lights: Query<
+        Entity,
+        (
+            Or<(With<PointLight>, With<DirectionalLight>, With<SpotLight>)>,
+            Without<GrifLight>,
         ),
-        ..default()
-    });
+    >,
+    cameras: Query<Entity, With<Camera>>,
+) {
+    for entity in flip_normals_query.iter() {
+        if let Ok(children) = children_query.get(entity) {
+            all_children(children, &children_query, &mut |entity| {
+                // Sponza needs flipped normals
+                if let Ok(mat_h) = has_std_mat.get(entity) {
+                    if let Some(mat) = materials.get_mut(mat_h) {
+                        mat.flip_normal_map_y = true;
+                    }
+                }
+
+                // Sponza has a bunch of lights by default
+                if lights.get(entity).is_ok() {
+                    commands.entity(entity).despawn_recursive();
+                }
+
+                // Sponza has a bunch of cameras by default
+                if cameras.get(entity).is_ok() {
+                    commands.entity(entity).despawn_recursive();
+                }
+            });
+            commands.entity(entity).remove::<PostProcScene>();
+        }
+    }
 }
 
 fn set_sponza_tlas(
@@ -528,13 +639,254 @@ fn cube_rotator(
     }
 }
 
-fn update_settings(mut settings: Query<&mut TraceSettings>, diagnostics: Res<Diagnostics>) {
+fn update_settings(
+    mut settings: Query<&mut TraceSettings>,
+    diagnostics: Res<Diagnostics>,
+    sun: Query<&Transform, With<DirectionalLight>>,
+) {
+    let Some(sun) = sun.iter().next() else {
+        return;
+    };
     for mut setting in &mut settings {
         setting.frame = setting.frame.wrapping_add(1);
+        if setting.frame % 2 == 0 {
+            setting.render_depth_this_frame = 1;
+        } else {
+            setting.render_depth_this_frame = 0;
+        }
         if let Some(diag) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
             let hysteresis = 0.9;
             let fps = hysteresis + diag.value().unwrap_or(0.0) as f32;
             setting.fps = setting.fps * hysteresis + fps * (1.0 - hysteresis);
+            setting.sun_direction = sun.forward();
+        }
+    }
+}
+
+//----------------------------
+//----------------------------
+//----------------------------
+
+#[derive(AsBindGroup, Debug, Clone, TypeUuid)]
+#[uuid = "165799f2-923e-4548-8879-be574f9db989"]
+#[bind_group_data(CustomStandardMaterialKey)]
+#[uniform(0, CustomStandardMaterialUniform)]
+pub struct CustomStandardMaterial {
+    pub base_color: Color,
+    #[texture(1)]
+    #[sampler(2)]
+    pub base_color_texture: Option<Handle<Image>>,
+    pub emissive: Color,
+    #[texture(3)]
+    #[sampler(4)]
+    pub emissive_texture: Option<Handle<Image>>,
+    pub perceptual_roughness: f32,
+    pub metallic: f32,
+    #[texture(5)]
+    #[sampler(6)]
+    pub metallic_roughness_texture: Option<Handle<Image>>,
+    #[doc(alias = "specular_intensity")]
+    pub reflectance: f32,
+    #[texture(9)]
+    #[sampler(10)]
+    pub normal_map_texture: Option<Handle<Image>>,
+    pub flip_normal_map_y: bool,
+    #[texture(7)]
+    #[sampler(8)]
+    pub occlusion_texture: Option<Handle<Image>>,
+    pub double_sided: bool,
+    pub cull_mode: Option<Face>,
+    pub unlit: bool,
+    pub fog_enabled: bool,
+    pub alpha_mode: AlphaMode,
+    pub depth_bias: f32,
+    #[texture(11)]
+    #[sampler(12)]
+    pub ddgi_texture: Handle<Image>,
+}
+
+#[derive(Clone, Default, ShaderType)]
+pub struct CustomStandardMaterialUniform {
+    pub base_color: Vec4,
+    pub emissive: Vec4,
+    pub roughness: f32,
+    pub metallic: f32,
+    pub reflectance: f32,
+    pub flags: u32,
+    pub alpha_cutoff: f32,
+}
+
+impl AsBindGroupShaderType<CustomStandardMaterialUniform> for CustomStandardMaterial {
+    fn as_bind_group_shader_type(
+        &self,
+        images: &RenderAssets<Image>,
+    ) -> CustomStandardMaterialUniform {
+        let mut flags = StandardMaterialFlags::NONE;
+        if self.base_color_texture.is_some() {
+            flags |= StandardMaterialFlags::BASE_COLOR_TEXTURE;
+        }
+        if self.emissive_texture.is_some() {
+            flags |= StandardMaterialFlags::EMISSIVE_TEXTURE;
+        }
+        if self.metallic_roughness_texture.is_some() {
+            flags |= StandardMaterialFlags::METALLIC_ROUGHNESS_TEXTURE;
+        }
+        if self.occlusion_texture.is_some() {
+            flags |= StandardMaterialFlags::OCCLUSION_TEXTURE;
+        }
+        if self.double_sided {
+            flags |= StandardMaterialFlags::DOUBLE_SIDED;
+        }
+        if self.unlit {
+            flags |= StandardMaterialFlags::UNLIT;
+        }
+        if self.fog_enabled {
+            flags |= StandardMaterialFlags::FOG_ENABLED;
+        }
+        let has_normal_map = self.normal_map_texture.is_some();
+        if has_normal_map {
+            if let Some(texture) = images.get(self.normal_map_texture.as_ref().unwrap()) {
+                match texture.texture_format {
+                    // All 2-component unorm formats
+                    TextureFormat::Rg8Unorm
+                    | TextureFormat::Rg16Unorm
+                    | TextureFormat::Bc5RgUnorm
+                    | TextureFormat::EacRg11Unorm => {
+                        flags |= StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP;
+                    }
+                    _ => {}
+                }
+            }
+            if self.flip_normal_map_y {
+                flags |= StandardMaterialFlags::FLIP_NORMAL_MAP_Y;
+            }
+        }
+        let mut alpha_cutoff = 0.5;
+        match self.alpha_mode {
+            AlphaMode::Opaque => flags |= StandardMaterialFlags::ALPHA_MODE_OPAQUE,
+            AlphaMode::Mask(c) => {
+                alpha_cutoff = c;
+                flags |= StandardMaterialFlags::ALPHA_MODE_MASK;
+            }
+            AlphaMode::Blend => flags |= StandardMaterialFlags::ALPHA_MODE_BLEND,
+            AlphaMode::Premultiplied => flags |= StandardMaterialFlags::ALPHA_MODE_PREMULTIPLIED,
+            AlphaMode::Add => flags |= StandardMaterialFlags::ALPHA_MODE_ADD,
+            AlphaMode::Multiply => flags |= StandardMaterialFlags::ALPHA_MODE_MULTIPLY,
+        };
+
+        CustomStandardMaterialUniform {
+            base_color: self.base_color.as_linear_rgba_f32().into(),
+            emissive: self.emissive.as_linear_rgba_f32().into(),
+            roughness: self.perceptual_roughness,
+            metallic: self.metallic,
+            reflectance: self.reflectance,
+            flags: flags.bits(),
+            alpha_cutoff,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct CustomStandardMaterialKey {
+    normal_map: bool,
+    cull_mode: Option<Face>,
+    depth_bias: i32,
+}
+
+impl From<&CustomStandardMaterial> for CustomStandardMaterialKey {
+    fn from(material: &CustomStandardMaterial) -> Self {
+        CustomStandardMaterialKey {
+            normal_map: material.normal_map_texture.is_some(),
+            cull_mode: material.cull_mode,
+            depth_bias: material.depth_bias as i32,
+        }
+    }
+}
+
+impl Material for CustomStandardMaterial {
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayout,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.normal_map {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment
+                    .shader_defs
+                    .push("STANDARDMATERIAL_NORMAL_MAP".into());
+            }
+        }
+        descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
+        if let Some(label) = &mut descriptor.label {
+            *label = format!("pbr_{}", *label).into();
+        }
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.bias.constant = key.bind_group_data.depth_bias;
+        }
+        Ok(())
+    }
+
+    fn prepass_fragment_shader() -> ShaderRef {
+        PBR_PREPASS_SHADER_HANDLE.typed().into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "pbr.wgsl".into()
+    }
+
+    #[inline]
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    #[inline]
+    fn depth_bias(&self) -> f32 {
+        self.depth_bias
+    }
+}
+
+fn swap_standard_material(
+    mut commands: Commands,
+    mut material_events: EventReader<AssetEvent<StandardMaterial>>,
+    entites: Query<(Entity, &Handle<StandardMaterial>)>,
+    standard_materials: Res<Assets<StandardMaterial>>,
+    mut custom_materials: ResMut<Assets<CustomStandardMaterial>>,
+    probe_textures: Res<ProbeTextures>,
+) {
+    for event in material_events.iter() {
+        let handle = match event {
+            AssetEvent::Created { handle } => handle,
+            _ => continue,
+        };
+        if let Some(material) = standard_materials.get(handle) {
+            let custom_mat_h = custom_materials.add(CustomStandardMaterial {
+                base_color: material.base_color,
+                base_color_texture: material.base_color_texture.clone(),
+                emissive: material.emissive,
+                emissive_texture: material.emissive_texture.clone(),
+                perceptual_roughness: material.perceptual_roughness,
+                metallic: material.metallic,
+                metallic_roughness_texture: material.metallic_roughness_texture.clone(),
+                reflectance: material.reflectance,
+                normal_map_texture: material.normal_map_texture.clone(),
+                flip_normal_map_y: material.flip_normal_map_y,
+                occlusion_texture: material.occlusion_texture.clone(),
+                double_sided: material.double_sided,
+                cull_mode: material.cull_mode,
+                unlit: material.unlit,
+                fog_enabled: material.fog_enabled,
+                alpha_mode: material.alpha_mode,
+                depth_bias: material.depth_bias,
+                ddgi_texture: probe_textures.probe_tex[0].clone(),
+            });
+            for (entity, entity_mat_h) in entites.iter() {
+                if entity_mat_h == handle {
+                    let mut ecmds = commands.entity(entity);
+                    ecmds.remove::<Handle<StandardMaterial>>();
+                    ecmds.insert(custom_mat_h.clone());
+                }
+            }
         }
     }
 }

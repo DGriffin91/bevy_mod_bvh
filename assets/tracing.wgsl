@@ -318,7 +318,7 @@ fn traverse_tlas(tlas_tex: texture_2d<f32>, instance_tex: texture_2d<i32>, insta
             local_ray.direction = normalize((model * vec4(ray.direction, 0.0)).xyz);
             local_ray.inv_direction = 1.0 / local_ray.direction;
 
-            var new_hit = traverse_blas(instance_tex, instance_idx, local_ray, min_dist);
+            var new_hit = traverse_blas_fast(instance_tex, instance_idx, local_ray, min_dist);
 
             if new_hit.distance < hit.distance {
                 hit = new_hit;
