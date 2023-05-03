@@ -36,7 +36,7 @@ fn irradiance_DDGI(N: vec3<f32>, V: vec3<f32>, ws_pos: vec3<f32>) -> vec3<f32> {
     //let refl_n = normalize(N * (2.0 * NdotV) - V);
 
 
-
+    // TODO move into uniform or something
     let probe_spacing = 1.5;
     var ws_offset = vec3(probe_spacing * -4.0, 0.5, probe_spacing * -4.0);
     ws_offset -= probe_spacing * 0.5;

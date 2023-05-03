@@ -89,6 +89,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 //    let prev_dist = textureLoad(prev_sh_tex, icoord).x;
 
 
+    // TODO move into uniform or something
     let probe_spacing = 1.5;
     var ws_offset = vec3(probe_spacing * -4.0, 0.5, probe_spacing * -4.0);
 

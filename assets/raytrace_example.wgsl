@@ -42,14 +42,12 @@ var dynamic_instance_mat: texture_2d<f32>;
 #import "tracing.wgsl"
 
 fn get_screen_ray(uv: vec2<f32>) -> Ray {
-    var clip = uv * 2.0 - 1.0;
-    var eye = view.inverse_projection * vec4(clip.x, -clip.y, -1.0, 1.0);
-    eye.w = 0.0;
-    let eye_dir = view.view * eye;
+    var ndc = uv * 2.0 - 1.0;
+    var eye = view.inverse_view_proj * vec4(ndc.x, -ndc.y, 0.0, 1.0);
 
     var ray: Ray;
     ray.origin = view.world_position.xyz;
-    ray.direction = normalize(eye_dir.xyz);
+    ray.direction = normalize(eye.xyz);
     ray.inv_direction = 1.0 / ray.direction;
 
     return ray;
