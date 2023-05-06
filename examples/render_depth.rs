@@ -170,12 +170,11 @@ fn main() {
                 ..default()
             }),
     )
-    .add_startup_system(setup)
+    .add_systems(Startup, setup)
     .add_plugin(BVHPlugin)
     .add_plugin(MaterialPlugin::<CustomMaterial>::default())
     .add_plugin(CameraControllerPlugin)
-    .add_system(camera_trace_depth)
-    .add_system(cube_rotator)
+    .add_systems(Update, (camera_trace_depth, cube_rotator))
     .run();
 }
 

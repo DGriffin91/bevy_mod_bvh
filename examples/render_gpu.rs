@@ -7,7 +7,7 @@ use bevy::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
         render_asset::RenderAssets,
-        render_graph::{Node, NodeRunError, RenderGraph, RenderGraphContext, SlotInfo, SlotType},
+        render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
             BindGroupLayoutEntry, BindingResource, BindingType, CachedRenderPipelineId, Operations,
@@ -50,10 +50,9 @@ fn main() {
         .add_plugin(GPUDataPlugin)
         .add_plugin(CameraControllerPlugin)
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
-        .add_startup_system(setup)
-        .add_systems((cube_rotator, update_settings).in_base_set(CoreSet::Update))
-        .add_startup_system(load_sponza)
-        .add_system(set_sponza_tlas.before(BVHSet::BlasTlas))
+        .add_systems(Startup, (setup, load_sponza))
+        .add_systems(Update, (cube_rotator, update_settings))
+        .add_systems(Update, set_sponza_tlas.before(BVHSet::BlasTlas))
         .run();
 }
 
@@ -67,25 +66,24 @@ impl Plugin for PostProcessPlugin {
             return;
         };
 
+        render_app
+            .add_render_graph_node::<RayTraceNode>(core_3d::graph::NAME, RayTraceNode::NAME)
+            .add_render_graph_edges(
+                core_3d::graph::NAME,
+                &[
+                    core_3d::graph::node::BLOOM,
+                    RayTraceNode::NAME,
+                    core_3d::graph::node::TONEMAPPING,
+                ],
+            );
+    }
+
+    fn finish(&self, app: &mut App) {
+        let render_app = match app.get_sub_app_mut(RenderApp) {
+            Ok(render_app) => render_app,
+            Err(_) => return,
+        };
         render_app.init_resource::<PostProcessPipeline>();
-
-        let node = RayTraceNode::new(&mut render_app.world);
-
-        let mut graph = render_app.world.resource_mut::<RenderGraph>();
-
-        let core_3d_graph = graph.get_sub_graph_mut(core_3d::graph::NAME).unwrap();
-
-        core_3d_graph.add_node(RayTraceNode::NAME, node);
-        let id = core_3d_graph.input_node().id;
-
-        core_3d_graph.add_slot_edge(
-            id,
-            core_3d::graph::input::VIEW_ENTITY,
-            RayTraceNode::NAME,
-            RayTraceNode::IN_VIEW,
-        );
-
-        core_3d_graph.add_node_edge(core_3d::graph::node::MAIN_PASS, RayTraceNode::NAME);
     }
 }
 
@@ -94,10 +92,11 @@ struct RayTraceNode {
 }
 
 impl RayTraceNode {
-    pub const IN_VIEW: &'static str = "view";
     pub const NAME: &str = "post_process";
+}
 
-    fn new(world: &mut World) -> Self {
+impl FromWorld for RayTraceNode {
+    fn from_world(world: &mut World) -> Self {
         Self {
             query: QueryState::new(world),
         }
@@ -105,22 +104,18 @@ impl RayTraceNode {
 }
 
 impl Node for RayTraceNode {
-    fn input(&self) -> Vec<SlotInfo> {
-        vec![SlotInfo::new(RayTraceNode::IN_VIEW, SlotType::Entity)]
-    }
-
     fn update(&mut self, world: &mut World) {
         self.query.update_archetypes(world);
     }
 
     fn run(
         &self,
-        graph: &mut RenderGraphContext,
+        graph_context: &mut RenderGraphContext,
         render_context: &mut RenderContext,
         world: &World,
     ) -> Result<(), NodeRunError> {
-        let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
-        let view_uniforms = world.resource::<ViewUniforms>();
+        let view_entity = graph_context.view_entity();
+        let view_uniforms: &ViewUniforms = world.resource::<ViewUniforms>();
         let view_uniforms = view_uniforms.uniforms.binding().unwrap();
         let images = world.resource::<RenderAssets<Image>>();
         let gpu_data = world.resource::<GpuData>();

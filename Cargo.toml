@@ -6,16 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.10" }
+bevy = { git = "https://github.com/mockersf/bevy", branch = "fix-examples-after-webgpu" }
 bvh = { git = "https://github.com/svenstaro/bvh", rev = "c2f07b883df87dd0fd75762a931f451bfc004f83" }
 rand = "0.8"
 rand_distr = "0.4"
-bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools" }
+bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools", branch = "bevy-main" }
 bytemuck = "1.7"
 num-integer = "0.1"
 
 [dev-dependencies]
-bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera" }
+bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera", branch = "bevy-main" }
 
 # Enable optimization in debug mode
 [profile.dev]
@@ -25,3 +25,6 @@ debug = 1
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+[patch."https://github.com/bevyengine/bevy"]
+bevy = { git = "https://github.com/mockersf/bevy", branch = "fix-examples-after-webgpu" }

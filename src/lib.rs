@@ -25,6 +25,7 @@ impl Plugin for BVHPlugin {
             .insert_resource(StaticTLASData::default())
             .insert_resource(BLAS::default())
             .add_systems(
+                Update,
                 (check_tlas_need_update, build_blas, update_tlas)
                     .chain()
                     .in_set(BVHSet::BlasTlas),
@@ -158,26 +159,34 @@ impl MeshBVHItem {
         if let VertexAttributeValues::Float32x3(vertices) =
             &mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap()
         {
-            if let Indices::U32(indices) = &mesh.indices().unwrap() {
-                let mut triangles = indices
-                    .chunks(3)
-                    .map(|chunk| {
-                        Triangle::new(
-                            vertices[chunk[0] as usize].into(),
-                            vertices[chunk[1] as usize].into(),
-                            vertices[chunk[2] as usize].into(),
-                            [chunk[0], chunk[1], chunk[2]],
-                        )
-                    })
-                    .collect::<Vec<Triangle>>();
-                if !triangles.is_empty() {
-                    return Some(MeshBVHItem {
-                        bvh: BVH::build(&mut triangles),
-                        triangles,
-                    });
-                } else {
-                    return None;
+            let indices = match &mesh.indices().unwrap() {
+                Indices::U16(indices) => {
+                    let mut u32indices = Vec::new();
+                    for ind in indices.iter() {
+                        u32indices.push(*ind as u32);
+                    }
+                    u32indices.to_vec()
                 }
+                Indices::U32(indices) => indices.to_vec(),
+            };
+            let mut triangles = indices
+                .chunks(3)
+                .map(|chunk| {
+                    Triangle::new(
+                        vertices[chunk[0] as usize].into(),
+                        vertices[chunk[1] as usize].into(),
+                        vertices[chunk[2] as usize].into(),
+                        [chunk[0], chunk[1], chunk[2]],
+                    )
+                })
+                .collect::<Vec<Triangle>>();
+            if !triangles.is_empty() {
+                return Some(MeshBVHItem {
+                    bvh: BVH::build(&mut triangles),
+                    triangles,
+                });
+            } else {
+                return None;
             }
         }
         None

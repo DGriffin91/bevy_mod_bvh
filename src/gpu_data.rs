@@ -32,7 +32,8 @@ use num_integer::Roots;
 pub struct GPUDataPlugin;
 impl Plugin for GPUDataPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(init_gpu_data).add_systems(
+        app.add_systems(Startup, init_gpu_data).add_systems(
+            Update,
             (
                 update_vertices_indices_blas_data,
                 update_tlas_data,
@@ -47,7 +48,7 @@ impl Plugin for GPUDataPlugin {
             return;
         };
 
-        render_app.add_system(extract_gpu_data.in_schedule(ExtractSchedule));
+        render_app.add_systems(ExtractSchedule, extract_gpu_data);
     }
 }
 
@@ -121,7 +122,6 @@ fn init_gpu_data(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 
 // TODO don't include all meshes
 fn update_vertices_indices_blas_data(
-    mesh_events: EventReader<AssetEvent<Mesh>>,
     meshes: Res<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     blas: Res<BLAS>,
@@ -129,10 +129,9 @@ fn update_vertices_indices_blas_data(
 ) {
     // any time a mesh is added/removed/modified run get all the vertices and put them into a texture
     // put buffer mesh start and length into resource
-    if mesh_events.is_empty() {
+    if !blas.is_changed() {
         return;
     }
-    dbg!("update_vertices_indices_blas_data");
     let mut mesh_data = Vec::new();
     let mut index_data = Vec::new();
     let mut pos_data = Vec::new();
@@ -141,25 +140,30 @@ fn update_vertices_indices_blas_data(
     let mut blas_data = Vec::new();
     let mut mesh_data_reverse_map = HashMap::new();
 
-    for (_mesh_idx, (id, mesh)) in meshes.iter().enumerate() {
-        let mesh_h = meshes.get_handle(id);
+    for (mesh_h, mesh_blas) in blas.0.iter() {
+        let mesh = meshes.get(mesh_h).unwrap();
         let blas_start = blas_data.len();
         let index_start = index_data.len();
         let pos_start = pos_data.len(); // can be reused for normals
-        let indices = match mesh.indices().unwrap() {
-            bevy::render::mesh::Indices::U16(_) => panic!("U16 Indices not supported"),
-            bevy::render::mesh::Indices::U32(a) => a,
+        match mesh.indices().unwrap() {
+            bevy::render::mesh::Indices::U16(indices) => {
+                for index in indices {
+                    index_data.push(*index as i32);
+                }
+            }
+            bevy::render::mesh::Indices::U32(indices) => {
+                for index in indices {
+                    index_data.push(*index as i32);
+                }
+            }
         };
-        for index in indices {
-            index_data.push(*index as i32);
-        }
 
         for (p, n) in mesh_positions(mesh).zip(mesh_normals(mesh)) {
             pos_data.push(p.extend(0.0));
             nor_data.push(n.extend(0.0));
         }
 
-        for ind in indices.chunks(3) {
+        for ind in index_data[index_start..].chunks(3) {
             let a = pos_data[pos_start + ind[0] as usize].xyz();
             let b = pos_data[pos_start + ind[1] as usize].xyz();
             let c = pos_data[pos_start + ind[2] as usize].xyz();
@@ -177,8 +181,6 @@ fn update_vertices_indices_blas_data(
 
             tri_nor_data.push(normal.extend(dist));
         }
-
-        let mesh_blas = blas.0.get(&mesh_h).unwrap();
 
         let flat_bvh = mesh_blas.bvh.flatten();
         // TODO keep binary mesh data around
@@ -319,8 +321,10 @@ fn create_instance_mesh_data(
     let mut instance_mesh_data = Vec::new();
     for item in &tlas.aabbs {
         let (mesh_h, _trans) = mesh_entities.get(item.entity).unwrap();
-        let mesh_data = gpu_data.mesh_data[gpu_data.mesh_data_reverse_map[mesh_h]];
-        instance_mesh_data.push(mesh_data);
+        if let Some(mesh_h) = gpu_data.mesh_data_reverse_map.get(mesh_h) {
+            let mesh_data = gpu_data.mesh_data[*mesh_h];
+            instance_mesh_data.push(mesh_data);
+        }
     }
     let instance_data_image =
         images.add(i32_image(cast_slice(&instance_mesh_data), "instance_data"));

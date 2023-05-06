@@ -1,20 +1,20 @@
 fn get_tri_normal(idx: i32) -> vec4<f32> {
-    let dimension = textureDimensions(tri_nor).x;
+    let dimension = i32(textureDimensions(tri_nor).x);
     return textureLoad(tri_nor, vec2<i32>(idx % dimension, idx / dimension), 0);
 }
 
 fn get_vert_position(idx: i32) -> vec3<f32> {
-    let dimension = textureDimensions(vert_pos).x;
+    let dimension = i32(textureDimensions(vert_pos).x);
     return textureLoad(vert_pos, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
 }
 
 fn get_vert_normal(idx: i32) -> vec3<f32> {
-    let dimension = textureDimensions(vert_nor).x;
+    let dimension = i32(textureDimensions(vert_nor).x);
     return textureLoad(vert_nor, vec2<i32>(idx % dimension, idx / dimension), 0).xyz;
 }
 
 fn get_vert_index(idx: i32) -> i32 {
-    let dimension = textureDimensions(vert_indices).x;
+    let dimension = i32(textureDimensions(vert_indices).x);
     return textureLoad(vert_indices, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
@@ -24,18 +24,18 @@ fn get_tlas_max_length(tlas_tex: texture_2d<f32>) -> i32 {
 
 fn get_tlas_bvh(tlas_tex: texture_2d<f32>, idx: i32) -> vec4<f32> {
     let idx = idx + 1; //first is length, todo move elsewhere
-    let dimension = textureDimensions(tlas_tex).x;
+    let dimension = i32(textureDimensions(tlas_tex).x);
     return textureLoad(tlas_tex, vec2<i32>(idx % dimension, idx / dimension), 0);
 }
 
 fn get_blas_bvh(idx: i32) -> vec4<f32> {
-    let dimension = textureDimensions(blas).x;
+    let dimension = i32(textureDimensions(blas).x);
     return textureLoad(blas, vec2<i32>(idx % dimension, idx / dimension), 0);
 }
 
 fn get_instance_model(instance_mat_tex: texture_2d<f32>, idx: i32) -> mat4x4<f32> {
     let idx = idx * 4;
-    let dimension = textureDimensions(instance_mat_tex).x;
+    let dimension = i32(textureDimensions(instance_mat_tex).x);
     return mat4x4<f32>(
         textureLoad(instance_mat_tex, vec2<i32>((idx+0) % dimension, (idx+0) / dimension), 0),
         textureLoad(instance_mat_tex, vec2<i32>((idx+1) % dimension, (idx+1) / dimension), 0),
@@ -46,25 +46,25 @@ fn get_instance_model(instance_mat_tex: texture_2d<f32>, idx: i32) -> mat4x4<f32
 
 fn mesh_index_start(instance_tex: texture_2d<i32>, idx: i32) -> i32 {
     let idx = idx * 4 + 0;
-    let dimension = textureDimensions(instance_tex).x;
+    let dimension = i32(textureDimensions(instance_tex).x);
     return textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
 fn mesh_pos_start(instance_tex: texture_2d<i32>, idx: i32) -> i32 {
     let idx = idx * 4 + 1;
-    let dimension = textureDimensions(instance_tex).x;
+    let dimension = i32(textureDimensions(instance_tex).x);
     return textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
 fn mesh_blas_start(instance_tex: texture_2d<i32>, idx: i32) -> i32 {
     let idx = idx * 4 + 2;
-    let dimension = textureDimensions(instance_tex).x;
+    let dimension = i32(textureDimensions(instance_tex).x);
     return textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
 fn mesh_blas_count(instance_tex: texture_2d<i32>, idx: i32) -> i32 {
     let idx = idx * 4 + 3;
-    let dimension = textureDimensions(instance_tex).x;
+    let dimension = i32(textureDimensions(instance_tex).x);
     return textureLoad(instance_tex, vec2<i32>(idx % dimension, idx / dimension), 0).x;
 }
 
