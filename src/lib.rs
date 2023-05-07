@@ -2,14 +2,14 @@ pub mod gpu_data;
 pub mod ray;
 pub mod trace;
 
-use bevy::math::vec3a;
+use bevy::math::{vec3, vec3a};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, VertexAttributeValues};
-use bevy::render::primitives::Aabb;
 use bevy::utils::HashMap;
-use bvh::aabb::{Bounded, AABB};
+use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
-use bvh::bvh::BVH;
+use bvh::bvh::Bvh;
+use nalgebra::{Point3, Vector3};
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum BVHSet {
@@ -62,7 +62,7 @@ pub fn check_tlas_need_update(
             Or<(
                 Changed<Transform>,
                 Changed<Visibility>,
-                Changed<Aabb>,
+                Changed<bevy::render::primitives::Aabb>,
                 Changed<StaticTLAS>,
             )>,
         ),
@@ -76,7 +76,7 @@ pub fn check_tlas_need_update(
             Or<(
                 Changed<Transform>,
                 Changed<Visibility>,
-                Changed<Aabb>,
+                Changed<bevy::render::primitives::Aabb>,
                 Changed<DynamicTLAS>,
             )>,
         ),
@@ -120,7 +120,7 @@ pub fn update_tlas(
             static_aabbs.push(TLASAABB::new(entity, aabb, trans));
         }
         if !static_aabbs.is_empty() {
-            static_tlas.0.bvh = Some(BVH::build(&mut static_aabbs));
+            static_tlas.0.bvh = Some(Bvh::build(&mut static_aabbs));
             static_tlas.0.aabbs = static_aabbs;
         } else {
             static_tlas.0.bvh = None;
@@ -136,7 +136,7 @@ pub fn update_tlas(
             dynamic_aabbs.push(TLASAABB::new(entity, aabb, trans));
         }
         if !dynamic_aabbs.is_empty() {
-            dynamic_tlas.0.bvh = Some(BVH::build(&mut dynamic_aabbs));
+            dynamic_tlas.0.bvh = Some(Bvh::build(&mut dynamic_aabbs));
             dynamic_tlas.0.aabbs = dynamic_aabbs;
         } else {
             dynamic_tlas.0.bvh = None;
@@ -150,7 +150,7 @@ pub fn update_tlas(
 pub struct BLAS(pub HashMap<Handle<Mesh>, MeshBVHItem>);
 
 pub struct MeshBVHItem {
-    pub bvh: BVH,
+    pub bvh: Bvh<f32, 3>,
     pub triangles: Vec<Triangle>,
 }
 
@@ -169,27 +169,26 @@ impl MeshBVHItem {
                 }
                 Indices::U32(indices) => indices.to_vec(),
             };
-            let mut triangles = indices
-                .chunks(3)
-                .map(|chunk| {
-                    Triangle::new(
-                        vertices[chunk[0] as usize].into(),
-                        vertices[chunk[1] as usize].into(),
-                        vertices[chunk[2] as usize].into(),
-                        [chunk[0], chunk[1], chunk[2]],
-                    )
-                })
-                .collect::<Vec<Triangle>>();
-            if !triangles.is_empty() {
-                return Some(MeshBVHItem {
-                    bvh: BVH::build(&mut triangles),
+            let mut triangles = Vec::new();
+            for chunk in indices.chunks(3) {
+                let a: Vec3 = vertices[chunk[0] as usize].into();
+                let b: Vec3 = vertices[chunk[1] as usize].into();
+                let c: Vec3 = vertices[chunk[2] as usize].into();
+                triangles.push(Triangle::new(a, b, c, [chunk[0], chunk[1], chunk[2]]));
+            }
+            if !triangles.is_empty() && indices.len() >= 3 {
+                let bvh_item = MeshBVHItem {
+                    bvh: Bvh::build(&mut triangles),
                     triangles,
-                });
+                };
+                return Some(bvh_item);
             } else {
-                return None;
+                panic!("empty");
+                //return None;
             }
         }
-        None
+        panic!("incompatible");
+        //None
     }
 }
 
@@ -202,7 +201,7 @@ pub struct DynamicTLAS;
 // Top-Level Acceleration Structure
 #[derive(Default)]
 pub struct TLAS {
-    pub bvh: Option<BVH>,
+    pub bvh: Option<Bvh<f32, 3>>,
     pub aabbs: Vec<TLASAABB>,
     pub skip_update: bool,
 }
@@ -223,7 +222,7 @@ pub struct TLASUpdateSkip(pub (bool, bool));
 #[derive(Debug, Clone)]
 pub struct TLASAABB {
     pub entity: Entity,
-    aabb: AABB,
+    aabb: Aabb<f32, 3>,
     node_index: usize,
 }
 
@@ -236,7 +235,7 @@ impl TLASAABB {
         let model = trans.compute_matrix();
         let aabb_min = bevy_aabb.center - bevy_aabb.half_extents;
         let extents = bevy_aabb.half_extents * 2.0;
-        let mut aabb = AABB::empty();
+        let mut aabb = Aabb::empty();
         for v in [
             vec3a(0.0, 0.0, 0.0),
             vec3a(extents.x, 0.0, 0.0),
@@ -247,7 +246,8 @@ impl TLASAABB {
             vec3a(extents.x, 0.0, extents.z),
             extents,
         ] {
-            aabb = aabb.grow(&model.transform_point3a(aabb_min + v).into());
+            let p = &model.transform_point3a(aabb_min + v);
+            aabb = aabb.grow(&Point3::new(p.x, p.y, p.z));
         }
 
         TLASAABB {
@@ -258,13 +258,13 @@ impl TLASAABB {
     }
 }
 
-impl Bounded for TLASAABB {
-    fn aabb(&self) -> AABB {
+impl Bounded<f32, 3> for TLASAABB {
+    fn aabb(&self) -> Aabb<f32, 3> {
         self.aabb
     }
 }
 
-impl BHShape for TLASAABB {
+impl BHShape<f32, 3> for TLASAABB {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -281,7 +281,7 @@ pub struct Triangle {
     pub b: Vec3,
     pub c: Vec3,
     pub indices: [u32; 3],
-    aabb: AABB,
+    aabb: Aabb<f32, 3>,
     node_index: usize,
 }
 
@@ -292,7 +292,10 @@ impl Triangle {
             b,
             c,
             indices,
-            aabb: AABB::empty().grow(&a).grow(&b).grow(&c),
+            aabb: Aabb::empty()
+                .grow(&vec3_to_point3(a))
+                .grow(&vec3_to_point3(b))
+                .grow(&vec3_to_point3(c)),
             node_index: 0,
         }
     }
@@ -302,13 +305,13 @@ impl Triangle {
     }
 }
 
-impl Bounded for Triangle {
-    fn aabb(&self) -> AABB {
+impl Bounded<f32, 3> for Triangle {
+    fn aabb(&self) -> Aabb<f32, 3> {
         self.aabb
     }
 }
 
-impl BHShape for Triangle {
+impl BHShape<f32, 3> for Triangle {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -316,4 +319,16 @@ impl BHShape for Triangle {
     fn bh_node_index(&self) -> usize {
         self.node_index
     }
+}
+
+fn vec3_to_point3(p: Vec3) -> Point3<f32> {
+    Point3::new(p.x, p.y, p.z)
+}
+
+fn point3_to_vec3(p: Point3<f32>) -> Vec3 {
+    vec3(p.x, p.y, p.z)
+}
+
+fn glam_vec3_to_vector3(p: Vec3) -> Vector3<f32> {
+    Vector3::new(p.x, p.y, p.z)
 }

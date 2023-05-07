@@ -119,28 +119,23 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
 }
 
 // just check if the ray intersects a plane in the aabb with the normal of the tri
-fn traverse_blas_fast(instance: MeshData, ray: Ray, min_dist: f32) -> Hit {
-    let blas_start = i32(instance.blas_start);
-    let mesh_pos_start = i32(instance.vert_data_start);
-    let blas_count = i32(instance.blas_count);
-    let mesh_index_start = i32(instance.vert_idx_start);
-    
+fn traverse_blas_fast(instance: MeshData, ray: Ray, min_dist: f32) -> Hit {    
     //TODO Should we start at 1 since we already tested aginst the first AABB in the TLAS?
     var next_idx = 0; 
     var hit: Hit;
     hit.distance = F32_MAX;
-    var min_dist = min_dist;
     var aabb_inter = vec2(0.0);
     var last_aabb_min = vec3(0.0);
     var last_aabb_max = vec3(0.0);
-    while (next_idx < blas_count) {
-        let blas = blas_buffer[next_idx + blas_start];
+    var min_dist = min_dist;
+    while (next_idx < instance.blas_count) {
+        let blas = blas_buffer[next_idx + instance.blas_start];
         if blas.entry_or_shape_idx < 0 {
             let triangle_idx = (blas.entry_or_shape_idx + 1) * -3;
             var normal = blas.tri_nor;
             // TODO improve accuracy with distance to plane along normal (stored in normal.w)
             let t = intersects_plane(ray, (last_aabb_min + last_aabb_max) / 2.0, normal.xyz);
-            if  t > aabb_inter.x - 0.005 && t < aabb_inter.y + 0.005 {
+            if  t > aabb_inter.x - 0.005 && t < aabb_inter.y + 0.005 && t < min_dist {
                 hit.distance = t;
                 hit.triangle_idx = triangle_idx;
                 hit.uv = vec2(0.5, 0.5);
@@ -159,49 +154,39 @@ fn traverse_blas_fast(instance: MeshData, ray: Ray, min_dist: f32) -> Hit {
             aabb_inter = intersects_aabb_seg(ray, blas.aabb_min, blas.aabb_max);
             next_idx = select(blas.exit_idx, 
                               blas.entry_or_shape_idx, 
-                              aabb_inter.x < min_dist);
+                              aabb_inter.x < min(min_dist, hit.distance));
         }
     }
     return hit;
 }
 
-fn traverse_blas(instance: MeshData, ray: Ray, min_dist: f32) -> Hit {
-    //let blas_start = mesh_blas_start(instance_tex, instance_idx);
-    //let blas_count = mesh_blas_count(instance_tex, instance_idx);
-    //let mesh_index_start = mesh_index_start(instance_tex, instance_idx);
-    //let mesh_pos_start = mesh_pos_start(instance_tex, instance_idx);
-
-    let blas_start = i32(instance.blas_start);
-    let mesh_pos_start = i32(instance.vert_data_start);
-    let blas_count = i32(instance.blas_count);
-    let mesh_index_start = i32(instance.vert_idx_start);
-    
+fn traverse_blas(instance: MeshData, ray: Ray, min_dist: f32) -> Hit {    
     //TODO Should we start at 1 since we already tested aginst the first AABB in the TLAS?
     var next_idx = 0; 
     var hit: Hit;
     hit.distance = F32_MAX;
-    var min_dist = min_dist;
     var aabb_inter = vec2(0.0);
-    while (next_idx < blas_count) {
-        let blas = blas_buffer[next_idx + blas_start];
+    var min_dist = min_dist;
+    while (next_idx < instance.blas_count) {
+        let blas = blas_buffer[next_idx + instance.blas_start];
         if blas.entry_or_shape_idx < 0 {
             let triangle_idx = (blas.entry_or_shape_idx + 1) * -3;
             // If the entry_index is negative, then it's a leaf node.
-            let ind1 = i32(index_buffer[triangle_idx + 0 + mesh_index_start].idx);
-            let ind2 = i32(index_buffer[triangle_idx + 1 + mesh_index_start].idx);
-            let ind3 = i32(index_buffer[triangle_idx + 2 + mesh_index_start].idx);            
-            let p1 = vertex_buffer[ind1 + mesh_pos_start].position;
-            let p2 = vertex_buffer[ind2 + mesh_pos_start].position;
-            let p3 = vertex_buffer[ind3 + mesh_pos_start].position;
+            let ind1 = i32(index_buffer[triangle_idx + 0 + instance.vert_idx_start].idx);
+            let ind2 = i32(index_buffer[triangle_idx + 1 + instance.vert_idx_start].idx);
+            let ind3 = i32(index_buffer[triangle_idx + 2 + instance.vert_idx_start].idx);            
+            let p1 = vertex_buffer[ind1 + instance.vert_data_start].position;
+            let p2 = vertex_buffer[ind2 + instance.vert_data_start].position;
+            let p3 = vertex_buffer[ind3 + instance.vert_data_start].position;
 
             // vert order is acb?
             let intr = intersects_triangle(ray, p1, p3, p2);
-            if intr.distance < hit.distance {
+            if intr.distance < min_dist {
                 hit.distance = intr.distance;
                 hit.triangle_idx = triangle_idx;
                 hit.uv = intr.uv;
+                min_dist = min(min_dist, hit.distance);
             }
-            min_dist = min(min_dist, hit.distance);
             // Exit the current node.
             next_idx = blas.exit_idx;
         } else {
@@ -255,7 +240,7 @@ fn get_surface_normal(instance: InstanceData, hit: Hit) -> vec3<f32> {
     
     // transform local space normal into world space
     // TODO try right hand mult instead
-    normal = normalize(transpose(instance.model) * vec4(normal, 0.0)).xyz;
+    normal = normalize(instance.local_to_world * vec4(normal, 0.0)).xyz;
 
     return normal;
 }
@@ -277,7 +262,7 @@ fn compute_tri_normal(instance: InstanceData, hit: Hit) -> vec3<f32> {
     var normal = normalize(cross(v1, v2));
 
     // transform local space normal into world space
-    normal = normalize(transpose(instance.model) * vec4(normal, 0.0)).xyz;
+    normal = normalize(instance.local_to_world * vec4(normal, 0.0)).xyz;
 
     return normal; 
 }

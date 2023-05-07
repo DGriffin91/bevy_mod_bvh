@@ -5,14 +5,15 @@ struct VertexData {
 }
 
 struct MeshData {
-    vert_idx_start: u32,
-    vert_data_start: u32,
-    blas_start: u32,
-    blas_count: u32,
+    vert_idx_start: i32,
+    vert_data_start: i32,
+    blas_start: i32,
+    blas_count: i32,
 }
 
 struct InstanceData {
-    model: mat4x4<f32>,
+    local_to_world: mat4x4<f32>,
+    world_to_local: mat4x4<f32>,
     mesh_data: MeshData,
 }
 

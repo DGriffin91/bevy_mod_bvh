@@ -2,8 +2,9 @@ use bevy::prelude::*;
 use bvh::ray::Ray;
 
 use crate::{
+    glam_vec3_to_vector3, point3_to_vec3,
     ray::{intersects_triangle, Intersection},
-    Triangle, BLAS, TLAS,
+    vec3_to_point3, Triangle, BLAS, TLAS,
 };
 
 #[derive(Clone)]
@@ -18,7 +19,7 @@ pub struct HitResult {
 pub fn append_closest_entities_hit(
     tlas: &TLAS,
     blas: &BLAS,
-    scene_ray: &Ray,
+    scene_ray: &Ray<f32, 3>,
     entities: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
     hit_entites: &mut Vec<HitResult>,
 ) {
@@ -39,16 +40,21 @@ pub fn append_closest_entities_hit(
             let mat = trans.compute_matrix();
             let inv_mat = mat.inverse();
 
-            let t_origin = inv_mat.project_point3(scene_ray.origin);
-            let t_direction = inv_mat.transform_vector3(scene_ray.direction);
+            let t_origin = inv_mat.project_point3(point3_to_vec3(scene_ray.origin));
+            let t_direction = inv_mat.transform_vector3(point3_to_vec3(scene_ray.direction.into()));
 
-            let ray = Ray::new(t_origin, t_direction);
+            let ray = Ray::new(vec3_to_point3(t_origin), glam_vec3_to_vector3(t_direction));
             let hits = bvh_item.bvh.traverse(&ray, &bvh_item.triangles);
 
             let mut closest = Intersection::new(std::f32::INFINITY, 0.0, 0.0, false);
             let mut closest_tri = None;
             for tri in hits {
-                let hit = intersects_triangle(&ray, &tri.a, &tri.b, &tri.c);
+                let hit = intersects_triangle(
+                    &ray,
+                    &vec3_to_point3(tri.a),
+                    &vec3_to_point3(tri.b),
+                    &vec3_to_point3(tri.c),
+                );
 
                 if hit.distance < closest.distance {
                     closest = hit;
@@ -81,7 +87,7 @@ pub fn trace_ray(
 
     let mut hit_entites: Vec<HitResult> = Vec::new();
 
-    let scene_ray = Ray::new(origin, direction);
+    let scene_ray = Ray::new(vec3_to_point3(origin), glam_vec3_to_vector3(direction));
 
     append_closest_entities_hit(static_tlas, blas, &scene_ray, entities, &mut hit_entites);
 
@@ -116,13 +122,13 @@ pub fn trace_visibility_ray(
     let mut blocked = false;
     let direction = (dest - origin).normalize();
     let statin_entity_hits = if let Some(scene_bvh) = &static_tlas.bvh {
-        let scene_ray = Ray::new(origin, direction);
+        let scene_ray = Ray::new(vec3_to_point3(origin), glam_vec3_to_vector3(direction));
         scene_bvh.traverse(&scene_ray, &static_tlas.aabbs)
     } else {
         Vec::new()
     };
     let dynamic_entity_hits = if let Some(scene_bvh) = &dynamic_tlas.bvh {
-        let scene_ray = Ray::new(origin, direction);
+        let scene_ray = Ray::new(vec3_to_point3(origin), glam_vec3_to_vector3(direction));
         scene_bvh.traverse(&scene_ray, &dynamic_tlas.aabbs)
     } else {
         Vec::new()
@@ -143,11 +149,16 @@ pub fn trace_visibility_ray(
             let t_dest_pos = inv_mat.project_point3(dest);
             let t_distance = t_dest_pos.distance(t_origin);
 
-            let ray = Ray::new(t_origin, t_direction);
+            let ray = Ray::new(vec3_to_point3(t_origin), glam_vec3_to_vector3(t_direction));
             let hits = bvh_item.bvh.traverse(&ray, &bvh_item.triangles);
 
             for tri in hits {
-                let hit = intersects_triangle(&ray, &tri.a, &tri.b, &tri.c);
+                let hit = intersects_triangle(
+                    &ray,
+                    &vec3_to_point3(tri.a),
+                    &vec3_to_point3(tri.b),
+                    &vec3_to_point3(tri.c),
+                );
 
                 if hit.distance < t_distance {
                     blocked = true;

@@ -1,4 +1,5 @@
 use bevy::core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
+use bevy::math::vec3;
 use bevy::pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS};
 use bevy::prelude::*;
 
@@ -30,18 +31,26 @@ impl Plugin for GPUDataPlugin {
 
         render_app
             .init_resource::<GPUBuffers>()
+            .init_resource::<StaticInstanceOrder>()
+            .init_resource::<DynamicInstanceOrder>()
             .add_systems(ExtractSchedule, extract_gpu_data);
     }
 }
 
+#[macro_export]
 macro_rules! bind_group_layout_entry {
     () => {
-        pub fn bind_group_layout_entry(binding: u32) -> BindGroupLayoutEntry {
-            BindGroupLayoutEntry {
+        pub fn bind_group_layout_entry(
+            binding: u32,
+        ) -> bevy::render::render_resource::BindGroupLayoutEntry {
+            bevy::render::render_resource::BindGroupLayoutEntry {
                 binding,
-                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
+                visibility: bevy::render::render_resource::ShaderStages::FRAGMENT
+                    | bevy::render::render_resource::ShaderStages::COMPUTE,
+                ty: bevy::render::render_resource::BindingType::Buffer {
+                    ty: bevy::render::render_resource::BufferBindingType::Storage {
+                        read_only: true,
+                    },
                     has_dynamic_offset: false,
                     min_binding_size: Some(Self::min_size()),
                 },
@@ -63,15 +72,17 @@ impl VertexData {
 
 #[derive(ShaderType, Clone, Copy)]
 pub struct MeshData {
-    pub vert_idx_start: u32,
-    pub vert_data_start: u32,
-    pub blas_start: u32,
-    pub blas_count: u32,
+    // all i32 so conversion doesn't need to happen on gpu
+    pub vert_idx_start: i32,
+    pub vert_data_start: i32,
+    pub blas_start: i32,
+    pub blas_count: i32,
 }
 
 #[derive(ShaderType)]
 pub struct InstanceData {
-    pub model: Mat4,
+    pub local_to_world: Mat4,
+    pub world_to_local: Mat4,
     pub mesh_data: MeshData,
 }
 
@@ -116,9 +127,7 @@ pub struct GPUBuffers {
 
 macro_rules! some_or_return_none {
     ($buffer:expr) => {{
-        let Some(r) = $buffer.binding() else {
-                                                                                        return None
-                                                                                    };
+        let Some(r) = $buffer.binding() else {return None};
         r
     }};
 }
@@ -183,17 +192,25 @@ pub fn new_storage_buffer<T: ShaderSize + WriteInto>(
     buffer
 }
 
+#[derive(Resource, Default)]
+pub struct StaticInstanceOrder(pub Vec<Entity>);
+
+#[derive(Resource, Default)]
+pub struct DynamicInstanceOrder(pub Vec<Entity>);
+
 pub fn extract_gpu_data(
     meshes: Extract<Res<Assets<Mesh>>>,
     blas: Extract<Res<BLAS>>,
     static_tlas: Extract<Res<StaticTLASData>>,
     dynamic_tlas: Extract<Res<DynamicTLASData>>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
     mut instance_mesh_data: Local<Vec<MeshData>>,
     mut mesh_data_reverse_map: Local<HashMap<Handle<Mesh>, usize>>,
-    mesh_entities: Extract<Query<(&Handle<Mesh>, &GlobalTransform)>>,
+    mesh_entities: Extract<Query<(Entity, &Handle<Mesh>, &GlobalTransform)>>,
     mut gpu_buffers: ResMut<GPUBuffers>,
+    mut static_instance_order: ResMut<StaticInstanceOrder>,
+    mut dynamic_instance_order: ResMut<DynamicInstanceOrder>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
 ) {
     // any time a mesh is added/removed/modified run get all the vertices and put them into a texture
     // put buffer mesh start and length into resource
@@ -241,10 +258,10 @@ pub fn extract_gpu_data(
 
             let mesh_data_idx = instance_mesh_data.len();
             instance_mesh_data.push(MeshData {
-                blas_start: blas_start as u32,
-                blas_count: flat_bvh.len() as u32,
-                vert_idx_start: index_start as u32,
-                vert_data_start: vertex_start as u32,
+                blas_start: blas_start as i32,
+                blas_count: flat_bvh.len() as i32,
+                vert_idx_start: index_start as i32,
+                vert_data_start: vertex_start as i32,
             });
             mesh_data_reverse_map.insert(mesh_h.clone(), mesh_data_idx);
         }
@@ -278,12 +295,16 @@ pub fn extract_gpu_data(
 
     if static_tlas.is_changed() || blas.is_changed() {
         let mut gpu_mesh_instance_data = Vec::new();
+        static_instance_order.0 = Vec::new();
         for item in &static_tlas.0.aabbs {
-            let (mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
+            let (entity, mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
             if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+                static_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
+                let local_to_world = trans.compute_matrix();
                 gpu_mesh_instance_data.push(InstanceData {
-                    model: trans.compute_matrix().inverse(),
+                    local_to_world,
+                    world_to_local: local_to_world.inverse(),
                     mesh_data,
                 });
             }
@@ -297,12 +318,16 @@ pub fn extract_gpu_data(
     }
     if dynamic_tlas.is_changed() || blas.is_changed() {
         let mut gpu_mesh_instance_data = Vec::new();
+        dynamic_instance_order.0 = Vec::new();
         for item in &dynamic_tlas.0.aabbs {
-            let (mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
+            let (entity, mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
             if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+                dynamic_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
+                let local_to_world = trans.compute_matrix();
                 gpu_mesh_instance_data.push(InstanceData {
-                    model: trans.compute_matrix().inverse(),
+                    local_to_world,
+                    world_to_local: local_to_world.inverse(),
                     mesh_data,
                 });
             }
@@ -318,7 +343,7 @@ pub fn extract_gpu_data(
 
 impl BVHData {
     fn from_flat_node_blas(
-        flat_bvh: &[FlatNode],
+        flat_bvh: &[FlatNode<f32, 3>],
         vertex_start: usize,
         vertex_data: &[VertexData],
         index_data: &[VertexIndices],
@@ -348,8 +373,9 @@ impl BVHData {
             };
 
             bvh_data.push(BVHData {
-                aabb_min: f.aabb.min,
-                aabb_max: f.aabb.max,
+                //TODO is there something faster? Transmute?
+                aabb_min: vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]),
+                aabb_max: vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]),
                 tri_nor,
                 entry_or_shape_idx,
                 exit_idx: f.exit_index as i32,
@@ -358,7 +384,7 @@ impl BVHData {
         bvh_data
     }
 
-    fn from_flat_node_tlas(flat_bvh: &[FlatNode]) -> Vec<Self> {
+    fn from_flat_node_tlas(flat_bvh: &[FlatNode<f32, 3>]) -> Vec<Self> {
         let mut bvh_data = Vec::new();
         for f in flat_bvh.iter() {
             let (entry_or_shape_idx, tri_nor) = if f.entry_index == u32::MAX {
@@ -370,8 +396,8 @@ impl BVHData {
             };
 
             bvh_data.push(BVHData {
-                aabb_min: f.aabb.min,
-                aabb_max: f.aabb.max,
+                aabb_min: vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]),
+                aabb_max: vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]),
                 tri_nor,
                 entry_or_shape_idx,
                 exit_idx: f.exit_index as i32,
