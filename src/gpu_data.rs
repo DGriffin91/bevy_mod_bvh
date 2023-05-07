@@ -1,18 +1,12 @@
-use bevy::core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
 use bevy::math::vec3;
-use bevy::pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS};
+
 use bevy::prelude::*;
 
 use bevy::render::render_resource::encase::private::WriteInto;
 use bevy::render::render_resource::{
-    BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingType, BufferBindingType,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
-    PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderDefVal,
-    ShaderSize, ShaderStages, ShaderType, StorageBuffer, TextureFormat,
+    BindGroupEntry, BindGroupLayoutEntry, ShaderSize, ShaderType, StorageBuffer,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use bevy::render::texture::BevyDefault;
-use bevy::render::view::ViewUniform;
 use bevy::render::{Extract, RenderApp};
 
 use bevy::utils::HashMap;
@@ -20,7 +14,9 @@ use bevy_mod_mesh_tools::{mesh_normals, mesh_positions};
 
 use bvh::flat_bvh::FlatNode;
 
-use crate::{DynamicTLASData, StaticTLASData, BLAS};
+use crate::{
+    bind_group_layout_entry, some_binding_or_return_none, DynamicTLASData, StaticTLASData, BLAS,
+};
 
 pub struct GPUDataPlugin;
 impl Plugin for GPUDataPlugin {
@@ -35,29 +31,6 @@ impl Plugin for GPUDataPlugin {
             .init_resource::<DynamicInstanceOrder>()
             .add_systems(ExtractSchedule, extract_gpu_data);
     }
-}
-
-#[macro_export]
-macro_rules! bind_group_layout_entry {
-    () => {
-        pub fn bind_group_layout_entry(
-            binding: u32,
-        ) -> bevy::render::render_resource::BindGroupLayoutEntry {
-            bevy::render::render_resource::BindGroupLayoutEntry {
-                binding,
-                visibility: bevy::render::render_resource::ShaderStages::FRAGMENT
-                    | bevy::render::render_resource::ShaderStages::COMPUTE,
-                ty: bevy::render::render_resource::BindingType::Buffer {
-                    ty: bevy::render::render_resource::BufferBindingType::Storage {
-                        read_only: true,
-                    },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(Self::min_size()),
-                },
-                count: None,
-            }
-        }
-    };
 }
 
 #[derive(ShaderType)]
@@ -125,13 +98,6 @@ pub struct GPUBuffers {
     pub dynamic_mesh_instance_data_buffer: StorageBuffer<Vec<InstanceData>>,
 }
 
-macro_rules! some_or_return_none {
-    ($buffer:expr) => {{
-        let Some(r) = $buffer.binding() else {return None};
-        r
-    }};
-}
-
 impl GPUBuffers {
     pub fn bind_group_layout_entry(bindings: [u32; 7]) -> [BindGroupLayoutEntry; 7] {
         [
@@ -149,31 +115,31 @@ impl GPUBuffers {
         Some([
             BindGroupEntry {
                 binding: bindings[0],
-                resource: some_or_return_none!(self.vertex_data_buffer),
+                resource: some_binding_or_return_none!(self.vertex_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[1],
-                resource: some_or_return_none!(self.index_data_buffer),
+                resource: some_binding_or_return_none!(self.index_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[2],
-                resource: some_or_return_none!(self.blas_data_buffer),
+                resource: some_binding_or_return_none!(self.blas_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[3],
-                resource: some_or_return_none!(self.static_tlas_data_buffer),
+                resource: some_binding_or_return_none!(self.static_tlas_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[4],
-                resource: some_or_return_none!(self.dynamic_tlas_data_buffer),
+                resource: some_binding_or_return_none!(self.dynamic_tlas_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[5],
-                resource: some_or_return_none!(self.static_mesh_instance_data_buffer),
+                resource: some_binding_or_return_none!(self.static_mesh_instance_data_buffer),
             },
             BindGroupEntry {
                 binding: bindings[6],
-                resource: some_or_return_none!(self.dynamic_mesh_instance_data_buffer),
+                resource: some_binding_or_return_none!(self.dynamic_mesh_instance_data_buffer),
             },
         ])
     }
@@ -405,67 +371,4 @@ impl BVHData {
         }
         bvh_data
     }
-}
-
-pub fn sampler_entry(binding: u32) -> BindGroupLayoutEntry {
-    BindGroupLayoutEntry {
-        binding,
-        visibility: ShaderStages::FRAGMENT,
-        ty: BindingType::Sampler(SamplerBindingType::Filtering),
-        count: None,
-    }
-}
-
-pub fn view_entry(binding: u32) -> BindGroupLayoutEntry {
-    BindGroupLayoutEntry {
-        binding,
-        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
-        ty: BindingType::Buffer {
-            ty: BufferBindingType::Uniform,
-            has_dynamic_offset: true,
-            min_binding_size: Some(ViewUniform::min_size()),
-        },
-        count: None,
-    }
-}
-
-pub fn get_default_pipeline_desc(
-    mut shader_defs: Vec<ShaderDefVal>,
-    layout: BindGroupLayout,
-    pipeline_cache: &mut PipelineCache,
-    shader: Handle<Shader>,
-    hdr: bool,
-) -> CachedRenderPipelineId {
-    shader_defs.push(ShaderDefVal::UInt(
-        "MAX_DIRECTIONAL_LIGHTS".to_string(),
-        MAX_DIRECTIONAL_LIGHTS as u32,
-    ));
-    shader_defs.push(ShaderDefVal::UInt(
-        "MAX_CASCADES_PER_LIGHT".to_string(),
-        MAX_CASCADES_PER_LIGHT as u32,
-    ));
-
-    pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("post_process_pipeline".into()),
-        layout: vec![layout],
-        vertex: fullscreen_shader_vertex_state(),
-        fragment: Some(FragmentState {
-            shader,
-            shader_defs,
-            entry_point: "fragment".into(),
-            targets: vec![Some(ColorTargetState {
-                format: if hdr {
-                    TextureFormat::Rgba16Float
-                } else {
-                    TextureFormat::bevy_default()
-                },
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
-        }),
-        primitive: PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: MultisampleState::default(),
-        push_constant_ranges: vec![],
-    })
 }

@@ -9,9 +9,9 @@ use bevy::{
         render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntry, BindingResource, BindingType, CachedRenderPipelineId, Operations,
-            PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, Sampler,
-            SamplerDescriptor, ShaderStages, ShaderType, TextureSampleType, TextureViewDimension,
+            BindingResource, CachedRenderPipelineId, Operations, PipelineCache,
+            RenderPassColorAttachment, RenderPassDescriptor, Sampler, SamplerDescriptor,
+            ShaderType, TextureViewDimension,
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
@@ -21,7 +21,10 @@ use bevy::{
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    gpu_data::{get_default_pipeline_desc, sampler_entry, view_entry, GPUBuffers, GPUDataPlugin},
+    gpu_data::{GPUBuffers, GPUDataPlugin},
+    pipeline_utils::{
+        get_default_pipeline_desc, image_entry, sampler_entry, uniform_entry, view_entry,
+    },
     BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
@@ -199,27 +202,9 @@ impl FromWorld for PostProcessPipeline {
 
         let mut entries = vec![
             view_entry(0),
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
-                ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Float { filterable: true },
-                    view_dimension: TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
+            image_entry(1, TextureViewDimension::D2),
             sampler_entry(2),
-            BindGroupLayoutEntry {
-                binding: 3,
-                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: bevy::render::render_resource::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            uniform_entry(3, Some(TraceSettings::min_size())),
         ];
 
         entries.append(&mut GPUBuffers::bind_group_layout_entry([4, 5, 6, 7, 8, 9, 10]).to_vec());

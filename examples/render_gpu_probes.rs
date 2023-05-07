@@ -18,12 +18,11 @@ use bevy::{
         render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
         render_resource::{
             AsBindGroup, AsBindGroupShaderType, BindGroupDescriptor, BindGroupEntry,
-            BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource,
-            BindingType, CachedRenderPipelineId, Extent3d, Face, Operations, PipelineCache,
-            RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, ShaderRef,
-            ShaderStages, ShaderType, SpecializedMeshPipelineError, StorageTextureAccess,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
-            TextureViewDescriptor, TextureViewDimension,
+            BindGroupLayout, BindGroupLayoutDescriptor, BindingResource, CachedRenderPipelineId,
+            Extent3d, Face, Operations, PipelineCache, RenderPassColorAttachment,
+            RenderPassDescriptor, RenderPipelineDescriptor, ShaderRef, ShaderType,
+            SpecializedMeshPipelineError, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
         },
         renderer::{RenderContext, RenderDevice},
         texture::{CachedTexture, ImageSampler},
@@ -34,7 +33,10 @@ use bevy::{
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    gpu_data::{get_default_pipeline_desc, view_entry, GPUBuffers, GPUDataPlugin},
+    gpu_data::{GPUBuffers, GPUDataPlugin},
+    pipeline_utils::{
+        get_default_pipeline_desc, storage_tex_read, storage_tex_write, uniform_entry, view_entry,
+    },
     BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
@@ -237,36 +239,9 @@ impl FromWorld for PostProcessPipeline {
 
         let mut entries = vec![
             view_entry(0),
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: bevy::render::render_resource::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 9,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::StorageTexture {
-                    access: StorageTextureAccess::ReadOnly,
-                    format: TextureFormat::Rgba16Float,
-                    view_dimension: TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 10,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::StorageTexture {
-                    access: StorageTextureAccess::WriteOnly,
-                    format: TextureFormat::Rgba16Float,
-                    view_dimension: TextureViewDimension::D2,
-                },
-                count: None,
-            },
+            uniform_entry(1, Some(TraceSettings::min_size())),
+            storage_tex_read(9, TextureFormat::Rgba16Float, TextureViewDimension::D2),
+            storage_tex_write(10, TextureFormat::Rgba16Float, TextureViewDimension::D2),
         ];
 
         entries.append(&mut GPUBuffers::bind_group_layout_entry([2, 3, 4, 5, 6, 7, 8]).to_vec());

@@ -1,4 +1,6 @@
 pub mod gpu_data;
+#[macro_use]
+pub mod pipeline_utils;
 pub mod ray;
 pub mod trace;
 
