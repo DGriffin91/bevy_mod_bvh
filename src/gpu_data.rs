@@ -1,18 +1,15 @@
-use bevy::core::cast_slice;
-
 use bevy::core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
-use bevy::math::{vec4, Vec4Swizzles};
 use bevy::pbr::{MAX_CASCADES_PER_LIGHT, MAX_DIRECTIONAL_LIGHTS};
 use bevy::prelude::*;
 
-use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::encase::private::WriteInto;
 use bevy::render::render_resource::{
-    BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-    BufferBindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
-    FragmentState, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor,
-    SamplerBindingType, ShaderDefVal, ShaderStages, ShaderType, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension,
+    BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingType, BufferBindingType,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, MultisampleState,
+    PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderDefVal,
+    ShaderSize, ShaderStages, ShaderType, StorageBuffer, TextureFormat,
 };
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::BevyDefault;
 use bevy::render::view::ViewUniform;
 use bevy::render::{Extract, RenderApp};
@@ -20,510 +17,367 @@ use bevy::render::{Extract, RenderApp};
 use bevy::utils::HashMap;
 use bevy_mod_mesh_tools::{mesh_normals, mesh_positions};
 
-use bvh::aabb::AABB;
-use bvh::bvh::BVH;
+use bvh::flat_bvh::FlatNode;
 
-use crate::{BVHSet, DynamicTLASData, StaticTLASData, BLAS, TLAS};
-
-use bytemuck::{cast, NoUninit};
-
-use num_integer::Roots;
+use crate::{DynamicTLASData, StaticTLASData, BLAS};
 
 pub struct GPUDataPlugin;
 impl Plugin for GPUDataPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, init_gpu_data).add_systems(
-            Update,
-            (
-                update_vertices_indices_blas_data,
-                update_tlas_data,
-                update_instance_data,
-            )
-                .chain()
-                .in_set(BVHSet::GpuData)
-                .after(BVHSet::BlasTlas),
-        );
-
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
-        render_app.add_systems(ExtractSchedule, extract_gpu_data);
+        render_app
+            .init_resource::<GPUBuffers>()
+            .add_systems(ExtractSchedule, extract_gpu_data);
     }
 }
 
-#[derive(NoUninit, Clone, Copy)]
-#[repr(C)]
+macro_rules! bind_group_layout_entry {
+    () => {
+        pub fn bind_group_layout_entry(binding: u32) -> BindGroupLayoutEntry {
+            BindGroupLayoutEntry {
+                binding,
+                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(Self::min_size()),
+                },
+                count: None,
+            }
+        }
+    };
+}
+
+#[derive(ShaderType)]
+pub struct VertexData {
+    pub position: Vec3,
+    pub normal: Vec3,
+}
+
+impl VertexData {
+    bind_group_layout_entry!();
+}
+
+#[derive(ShaderType, Clone, Copy)]
 pub struct MeshData {
-    pub index_start: i32,
-    pub pos_start: i32,
-    pub blas_start: i32,
-    pub blas_count: i32,
+    pub vert_idx_start: u32,
+    pub vert_data_start: u32,
+    pub blas_start: u32,
+    pub blas_count: u32,
 }
 
-// Data is currently all stored as i32 to avoid conversion
-// in hot paths on the GPU. Need to evaluate if this makes sense.
-#[derive(Resource, Clone)]
-pub struct GpuData {
-    pub mesh_data: Vec<MeshData>,
-    // use idx * len(MeshData)
-    pub mesh_data_reverse_map: HashMap<Handle<Mesh>, usize>,
-
-    // Uint idx flat as tri abcabcabc...
-    pub vert_indices: Handle<Image>,
-
-    // Vec4 with w unused
-    pub vert_pos: Handle<Image>,
-    pub vert_nor: Handle<Image>,
-    // precomputed triangle normals vec4 with w as distance to center of AABB
-    pub tri_nor: Handle<Image>,
-
-    // All BVH data is:
-    // Vec4Vec4 aabb min/max = xyz,
-    // 1st w (bitcast to i32) is entry_index  or -shape_idx
-    // 2nd w (bitcast to i32) is exit_index
-
-    //-shape_idx * 3 is index into vert_indices
-    pub blas: Handle<Image>,
-
-    //-shape_idx * instance_data_len is index into static/dynamic instance data
-    pub static_tlas_data: Handle<Image>,
-    pub dynamic_tlas_data: Handle<Image>,
-
-    // vert_index_start, vert_pos_start, blas_start, blas_count
-    pub static_instance_data: Handle<Image>,
-    pub dynamic_instance_data: Handle<Image>,
-
-    //inv mat: Vec4Vec4Vec4Vec4
-    pub static_instance_mat: Handle<Image>,
-    pub dynamic_instance_mat: Handle<Image>,
+#[derive(ShaderType)]
+pub struct InstanceData {
+    pub model: Mat4,
+    pub mesh_data: MeshData,
 }
 
-fn init_gpu_data(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    commands.insert_resource(GpuData {
-        mesh_data: Vec::new(),
-        mesh_data_reverse_map: HashMap::new(),
-        vert_indices: images.add(i32_image(&[0], "uninit_vert_indices")),
-        vert_pos: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_positions")),
-        vert_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_vert_normals")),
-        tri_nor: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_tri_normals")),
-        blas: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_blas")),
-        static_tlas_data: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_static_tlas_data")),
-        dynamic_tlas_data: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_tlas_data")),
-        static_instance_data: images
-            .add(f32rgba_image(&[Vec4::ZERO], "uninit_static_instance_data")),
-        dynamic_instance_data: images
-            .add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_instance_data")),
-        static_instance_mat: images.add(f32rgba_image(&[Vec4::ZERO], "uninit_static_instance_mat")),
-        dynamic_instance_mat: images
-            .add(f32rgba_image(&[Vec4::ZERO], "uninit_dynamic_instance_mat")),
-    })
+impl InstanceData {
+    bind_group_layout_entry!();
 }
 
-// TODO don't include all meshes
-fn update_vertices_indices_blas_data(
-    meshes: Res<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    blas: Res<BLAS>,
-    mut gpu_data: ResMut<GpuData>,
+#[derive(ShaderType)]
+pub struct VertexIndices {
+    pub idx: u32,
+}
+
+impl VertexIndices {
+    bind_group_layout_entry!();
+}
+
+#[derive(ShaderType)]
+pub struct BVHData {
+    pub aabb_min: Vec3,
+    pub aabb_max: Vec3,
+    // precomputed triangle normals
+    pub tri_nor: Vec3, //TODO use smaller, less precise format
+    //if positive: entry_idx if negative: -shape_idx
+    pub entry_or_shape_idx: i32,
+    pub exit_idx: i32,
+}
+
+impl BVHData {
+    bind_group_layout_entry!();
+}
+
+#[derive(Resource, Default)]
+pub struct GPUBuffers {
+    pub vertex_data_buffer: StorageBuffer<Vec<VertexData>>,
+    pub index_data_buffer: StorageBuffer<Vec<VertexIndices>>,
+    pub blas_data_buffer: StorageBuffer<Vec<BVHData>>,
+    pub static_tlas_data_buffer: StorageBuffer<Vec<BVHData>>,
+    pub dynamic_tlas_data_buffer: StorageBuffer<Vec<BVHData>>,
+    pub static_mesh_instance_data_buffer: StorageBuffer<Vec<InstanceData>>,
+    pub dynamic_mesh_instance_data_buffer: StorageBuffer<Vec<InstanceData>>,
+}
+
+macro_rules! some_or_return_none {
+    ($buffer:expr) => {{
+        let Some(r) = $buffer.binding() else {
+                                                                                        return None
+                                                                                    };
+        r
+    }};
+}
+
+impl GPUBuffers {
+    pub fn bind_group_layout_entry(bindings: [u32; 7]) -> [BindGroupLayoutEntry; 7] {
+        [
+            VertexData::bind_group_layout_entry(bindings[0]),
+            VertexIndices::bind_group_layout_entry(bindings[1]),
+            BVHData::bind_group_layout_entry(bindings[2]),
+            BVHData::bind_group_layout_entry(bindings[3]),
+            BVHData::bind_group_layout_entry(bindings[4]),
+            InstanceData::bind_group_layout_entry(bindings[5]),
+            InstanceData::bind_group_layout_entry(bindings[6]),
+        ]
+    }
+
+    pub fn bind_group_entries<'a>(&'a self, bindings: [u32; 7]) -> Option<[BindGroupEntry<'a>; 7]> {
+        Some([
+            BindGroupEntry {
+                binding: bindings[0],
+                resource: some_or_return_none!(self.vertex_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[1],
+                resource: some_or_return_none!(self.index_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[2],
+                resource: some_or_return_none!(self.blas_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[3],
+                resource: some_or_return_none!(self.static_tlas_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[4],
+                resource: some_or_return_none!(self.dynamic_tlas_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[5],
+                resource: some_or_return_none!(self.static_mesh_instance_data_buffer),
+            },
+            BindGroupEntry {
+                binding: bindings[6],
+                resource: some_or_return_none!(self.dynamic_mesh_instance_data_buffer),
+            },
+        ])
+    }
+}
+
+pub fn new_storage_buffer<T: ShaderSize + WriteInto>(
+    vec: Vec<T>,
+    label: &'static str,
+    render_device: &RenderDevice,
+    render_queue: &RenderQueue,
+) -> StorageBuffer<Vec<T>> {
+    let mut buffer = StorageBuffer::default();
+    buffer.set(vec);
+    buffer.set_label(Some(label));
+    buffer.write_buffer(render_device, render_queue);
+    buffer
+}
+
+pub fn extract_gpu_data(
+    meshes: Extract<Res<Assets<Mesh>>>,
+    blas: Extract<Res<BLAS>>,
+    static_tlas: Extract<Res<StaticTLASData>>,
+    dynamic_tlas: Extract<Res<DynamicTLASData>>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    mut instance_mesh_data: Local<Vec<MeshData>>,
+    mut mesh_data_reverse_map: Local<HashMap<Handle<Mesh>, usize>>,
+    mesh_entities: Extract<Query<(&Handle<Mesh>, &GlobalTransform)>>,
+    mut gpu_buffers: ResMut<GPUBuffers>,
 ) {
     // any time a mesh is added/removed/modified run get all the vertices and put them into a texture
     // put buffer mesh start and length into resource
-    if !blas.is_changed() {
-        return;
-    }
-    let mut mesh_data = Vec::new();
-    let mut index_data = Vec::new();
-    let mut pos_data = Vec::new();
-    let mut nor_data = Vec::new();
-    let mut tri_nor_data = Vec::new();
-    let mut blas_data = Vec::new();
-    let mut mesh_data_reverse_map = HashMap::new();
+    if blas.is_changed() {
+        let mut index_data = Vec::new();
+        let mut vertex_data = Vec::new();
+        let mut blas_data = Vec::new();
+        *instance_mesh_data = Vec::new();
+        *mesh_data_reverse_map = HashMap::new();
+        for (mesh_h, mesh_blas) in blas.0.iter() {
+            let mesh = meshes.get(mesh_h).unwrap();
+            let blas_start = blas_data.len();
+            let index_start = index_data.len();
+            let vertex_start = vertex_data.len();
 
-    for (mesh_h, mesh_blas) in blas.0.iter() {
-        let mesh = meshes.get(mesh_h).unwrap();
-        let blas_start = blas_data.len();
-        let index_start = index_data.len();
-        let pos_start = pos_data.len(); // can be reused for normals
-        match mesh.indices().unwrap() {
-            bevy::render::mesh::Indices::U16(indices) => {
-                for index in indices {
-                    index_data.push(*index as i32);
+            match mesh.indices().unwrap() {
+                bevy::render::mesh::Indices::U16(indices) => {
+                    for index in indices {
+                        index_data.push(VertexIndices { idx: *index as u32 });
+                    }
                 }
-            }
-            bevy::render::mesh::Indices::U32(indices) => {
-                for index in indices {
-                    index_data.push(*index as i32);
+                bevy::render::mesh::Indices::U32(indices) => {
+                    for index in indices {
+                        index_data.push(VertexIndices { idx: *index as u32 });
+                    }
                 }
-            }
-        };
-
-        for (p, n) in mesh_positions(mesh).zip(mesh_normals(mesh)) {
-            pos_data.push(p.extend(0.0));
-            nor_data.push(n.extend(0.0));
-        }
-
-        for ind in index_data[index_start..].chunks(3) {
-            let a = pos_data[pos_start + ind[0] as usize].xyz();
-            let b = pos_data[pos_start + ind[1] as usize].xyz();
-            let c = pos_data[pos_start + ind[2] as usize].xyz();
-
-            let v1 = b - a;
-            let v2 = c - a;
-
-            let normal = v1.cross(v2).normalize();
-
-            let aabb = AABB::empty().grow(&a).grow(&b).grow(&c);
-
-            let mid_point = (a + b + c) / 3.0;
-
-            let dist = (aabb.center() - mid_point).dot(normal);
-
-            tri_nor_data.push(normal.extend(dist));
-        }
-
-        let flat_bvh = mesh_blas.bvh.flatten();
-        // TODO keep binary mesh data around
-        for f in flat_bvh.iter() {
-            let entry_index = if f.entry_index == u32::MAX {
-                // If the entry_index is negative, then it's a leaf node.
-                // Shape index in this case is the index into the vertex indices
-                cast(-(f.shape_index as i32 + 1))
-            } else {
-                cast(f.entry_index as i32)
             };
-            blas_data.push(f.aabb.min.extend(entry_index));
-            blas_data.push(f.aabb.max.extend(cast(f.exit_index as i32)));
+
+            for (p, n) in mesh_positions(mesh).zip(mesh_normals(mesh)) {
+                vertex_data.push(VertexData {
+                    position: *p,
+                    normal: *n,
+                })
+            }
+
+            let flat_bvh = mesh_blas.bvh.flatten();
+            // TODO keep binary mesh data around
+            blas_data.append(&mut BVHData::from_flat_node_blas(
+                &flat_bvh,
+                vertex_start,
+                &vertex_data,
+                &index_data,
+                index_start,
+            ));
+
+            let mesh_data_idx = instance_mesh_data.len();
+            instance_mesh_data.push(MeshData {
+                blas_start: blas_start as u32,
+                blas_count: flat_bvh.len() as u32,
+                vert_idx_start: index_start as u32,
+                vert_data_start: vertex_start as u32,
+            });
+            mesh_data_reverse_map.insert(mesh_h.clone(), mesh_data_idx);
         }
-
-        let mesh_data_idx = mesh_data.len();
-        mesh_data_reverse_map.insert(mesh_h.clone(), mesh_data_idx);
-
-        mesh_data.push(MeshData {
-            index_start: index_start as i32,
-            pos_start: pos_start as i32,
-            blas_start: blas_start as i32,
-            blas_count: flat_bvh.len() as i32,
-        });
+        gpu_buffers.vertex_data_buffer =
+            new_storage_buffer(vertex_data, "vertex_data", &render_device, &render_queue);
+        gpu_buffers.index_data_buffer =
+            new_storage_buffer(index_data, "index_data", &render_device, &render_queue);
+        gpu_buffers.blas_data_buffer =
+            new_storage_buffer(blas_data, "blas_data", &render_device, &render_queue);
     }
-
-    gpu_data.vert_indices = images.add(i32_image(&index_data, "vert_indices"));
-    gpu_data.vert_pos = images.add(f32rgba_image(&pos_data, "vert_positions"));
-    gpu_data.vert_nor = images.add(f32rgba_image(&nor_data, "vert_normals"));
-    gpu_data.tri_nor = images.add(f32rgba_image(&tri_nor_data, "tri_normals"));
-    gpu_data.blas = images.add(f32rgba_image(&blas_data, "blas"));
-    gpu_data.mesh_data = mesh_data;
-    gpu_data.mesh_data_reverse_map = mesh_data_reverse_map;
-}
-
-fn update_tlas_data(
-    static_tlas: Res<StaticTLASData>,
-    dynamic_tlas: Res<DynamicTLASData>,
-    mut images: ResMut<Assets<Image>>,
-    mut gpu_data: ResMut<GpuData>,
-) {
-    // when the static or dynamic tlas is modified remake flattened version into texture
     if static_tlas.is_changed() {
         if let Some(bvh) = &static_tlas.0.bvh {
-            dbg!("update_static_tlas");
-            gpu_data.static_tlas_data = images.add(create_gpu_tlas_data(bvh, "static_tlas"));
+            gpu_buffers.static_tlas_data_buffer = new_storage_buffer(
+                BVHData::from_flat_node_tlas(&bvh.flatten()),
+                "tlas_data",
+                &render_device,
+                &render_queue,
+            );
         }
     }
     if dynamic_tlas.is_changed() {
         if let Some(bvh) = &dynamic_tlas.0.bvh {
-            gpu_data.dynamic_tlas_data = images.add(create_gpu_tlas_data(bvh, "dynamic_tlas"));
+            gpu_buffers.dynamic_tlas_data_buffer = new_storage_buffer(
+                BVHData::from_flat_node_tlas(&bvh.flatten()),
+                "tlas_data",
+                &render_device,
+                &render_queue,
+            );
         }
     }
-}
 
-fn create_gpu_tlas_data(bvh: &BVH, label: &'static str) -> Image {
-    let mut tlas_data = Vec::new();
-    let flat_bvh = bvh.flatten();
-    //first is length, todo move elsewhere
-    tlas_data.push(vec4(flat_bvh.len() as f32, 0.0, 0.0, 0.0));
-    for f in flat_bvh.iter() {
-        let entry_index = if f.entry_index == u32::MAX {
-            // If the entry_index is negative, then it's a leaf node.
-            // Shape index in this case is the mesh entity instance index
-            // Look up the equivalent info as: static_tlas.0.aabbs[shape_index].entity
-            // Order entity instances on the GPU per static_tlas.0.aabbs
-            cast(-(f.shape_index as i32 + 1))
-        } else {
-            cast(f.entry_index as i32)
-        };
-        tlas_data.push(f.aabb.min.extend(entry_index));
-        tlas_data.push(f.aabb.max.extend(cast(f.exit_index as i32)));
-    }
-    f32rgba_image(&tlas_data, label)
-}
-
-// TODO temporary, user needs to implement
-fn update_instance_data(
-    static_tlas: Res<StaticTLASData>,
-    dynamic_tlas: Res<DynamicTLASData>,
-    mut gpu_data: ResMut<GpuData>,
-    mesh_entities: Query<(&Handle<Mesh>, &GlobalTransform)>,
-    mut images: ResMut<Assets<Image>>,
-    blas: Res<BLAS>,
-) {
-    // since we are storing the blas idx in the instance data
-    // we need to update both static & dynamic if blas.is_changed()
-
-    // TODO we could just run create_instance_mat_data if the
-    // TLAS didn't have any addition/removals/order changes
-    // and all that changed was the tlas was rebuild with the same AABBs
-    // Would need to detect (probably in check_tlas_need_update()) if
-    // there were only transform changes. If thats the case we would use
-    // the previous AABB order and just rebuild from that order
-    // then signal this function to only update the mat data
     if static_tlas.is_changed() || blas.is_changed() {
-        dbg!("GpuStaticInstanceData");
-        create_instance_mat_data(
-            &static_tlas.0,
-            &mesh_entities,
-            &mut gpu_data,
-            &mut images,
-            false,
-        );
-        create_instance_mesh_data(
-            &static_tlas.0,
-            &mesh_entities,
-            &mut gpu_data,
-            &mut images,
-            false,
+        let mut gpu_mesh_instance_data = Vec::new();
+        for item in &static_tlas.0.aabbs {
+            let (mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
+            if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+                let mesh_data = instance_mesh_data[*mesh_idx];
+                gpu_mesh_instance_data.push(InstanceData {
+                    model: trans.compute_matrix().inverse(),
+                    mesh_data,
+                });
+            }
+        }
+        gpu_buffers.static_mesh_instance_data_buffer = new_storage_buffer(
+            gpu_mesh_instance_data,
+            "gpu_mesh_instance_data",
+            &render_device,
+            &render_queue,
         );
     }
     if dynamic_tlas.is_changed() || blas.is_changed() {
-        create_instance_mat_data(
-            &dynamic_tlas.0,
-            &mesh_entities,
-            &mut gpu_data,
-            &mut images,
-            true,
-        );
-        create_instance_mesh_data(
-            &dynamic_tlas.0,
-            &mesh_entities,
-            &mut gpu_data,
-            &mut images,
-            true,
-        );
-    }
-}
-
-fn create_instance_mesh_data(
-    tlas: &TLAS,
-    mesh_entities: &Query<(&Handle<Mesh>, &GlobalTransform)>,
-    gpu_data: &mut GpuData,
-    images: &mut Assets<Image>,
-    dynamic: bool,
-) {
-    let mut instance_mesh_data = Vec::new();
-    for item in &tlas.aabbs {
-        let (mesh_h, _trans) = mesh_entities.get(item.entity).unwrap();
-        if let Some(mesh_h) = gpu_data.mesh_data_reverse_map.get(mesh_h) {
-            let mesh_data = gpu_data.mesh_data[*mesh_h];
-            instance_mesh_data.push(mesh_data);
+        let mut gpu_mesh_instance_data = Vec::new();
+        for item in &dynamic_tlas.0.aabbs {
+            let (mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
+            if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+                let mesh_data = instance_mesh_data[*mesh_idx];
+                gpu_mesh_instance_data.push(InstanceData {
+                    model: trans.compute_matrix().inverse(),
+                    mesh_data,
+                });
+            }
         }
-    }
-    let instance_data_image =
-        images.add(i32_image(cast_slice(&instance_mesh_data), "instance_data"));
-    if dynamic {
-        gpu_data.dynamic_instance_data = instance_data_image;
-    } else {
-        gpu_data.static_instance_data = instance_data_image;
-    }
-}
-
-fn create_instance_mat_data(
-    tlas: &TLAS,
-    mesh_entities: &Query<(&Handle<Mesh>, &GlobalTransform)>,
-    gpu_data: &mut GpuData,
-    images: &mut Assets<Image>,
-    dynamic: bool,
-) {
-    let mut instance_mat_data = Vec::new();
-    for item in &tlas.aabbs {
-        let (_mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
-
-        let inv_mat = trans.compute_matrix().inverse();
-        instance_mat_data.push(inv_mat.x_axis);
-        instance_mat_data.push(inv_mat.y_axis);
-        instance_mat_data.push(inv_mat.z_axis);
-        instance_mat_data.push(inv_mat.w_axis);
-    }
-    let instance_mat_data_image =
-        images.add(f32rgba_image(&instance_mat_data, "instance_mat_data"));
-    if dynamic {
-        gpu_data.dynamic_instance_mat = instance_mat_data_image;
-    } else {
-        gpu_data.static_instance_mat = instance_mat_data_image;
+        gpu_buffers.dynamic_mesh_instance_data_buffer = new_storage_buffer(
+            gpu_mesh_instance_data,
+            "gpu_mesh_instance_data",
+            &render_device,
+            &render_queue,
+        );
     }
 }
 
-pub fn i32_image(i32data: &[i32], label: &'static str) -> Image {
-    let dimension = (i32data.len().sqrt() + 1).next_power_of_two();
-    let mut img = Image {
-        //dimension * dimension image with 1 u32 which are 4 bytes
-        data: vec![0u8; dimension * dimension * 1 * 4],
-        texture_descriptor: TextureDescriptor {
-            label: Some(label),
-            size: Extent3d {
-                width: dimension as u32,
-                height: dimension as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::R32Sint,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        },
-        ..default()
-    };
-    let data = cast_slice::<i32, u8>(i32data).to_vec();
-    img.data.splice(0..data.len(), data);
-    img
-}
+impl BVHData {
+    fn from_flat_node_blas(
+        flat_bvh: &[FlatNode],
+        vertex_start: usize,
+        vertex_data: &[VertexData],
+        index_data: &[VertexIndices],
+        index_start: usize,
+    ) -> Vec<Self> {
+        let mut bvh_data = Vec::new();
+        for f in flat_bvh.iter() {
+            let (entry_or_shape_idx, tri_nor) = if f.entry_index == u32::MAX {
+                let ind = f.shape_index as usize * 3;
+                let a = vertex_data[vertex_start + index_data[index_start + ind + 0].idx as usize]
+                    .position;
+                let b = vertex_data[vertex_start + index_data[index_start + ind + 1].idx as usize]
+                    .position;
+                let c = vertex_data[vertex_start + index_data[index_start + ind + 2].idx as usize]
+                    .position;
 
-pub fn f32rgba_image(vec4data: &[Vec4], label: &'static str) -> Image {
-    let dimension = (vec4data.len().sqrt() + 1).next_power_of_two();
-    let mut img = Image {
-        //dimension * dimension image with 4 f32s which are 4 bytes
-        data: vec![0u8; dimension * dimension * 4 * 4],
-        texture_descriptor: TextureDescriptor {
-            label: Some(label),
-            size: Extent3d {
-                width: dimension as u32,
-                height: dimension as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba32Float,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        },
-        ..default()
-    };
-    let data = cast_slice::<Vec4, u8>(vec4data).to_vec();
-    img.data.splice(0..data.len(), data);
-    img
-}
+                let v1 = b - a;
+                let v2 = c - a;
 
-pub fn extract_gpu_data(mut commands: Commands, gpu_data: Extract<Res<GpuData>>) {
-    commands.insert_resource(gpu_data.clone());
-}
+                let normal = v1.cross(v2).normalize();
 
-pub fn get_bindings<'a>(
-    images: &'a RenderAssets<Image>,
-    gpu_data: &'a GpuData,
-    bindings: [u32; 11],
-) -> Option<[BindGroupEntry<'a>; 11]> {
-    if let (
-        Some(vert_indices),
-        Some(vert_positions),
-        Some(vert_normals),
-        Some(tri_normals),
-        Some(blas),
-        Some(static_tlas_data),
-        Some(dynamic_tlas_data),
-        Some(static_instance_data),
-        Some(dynamic_instance_data),
-        Some(static_instance_mat),
-        Some(dynamic_instance_mat),
-    ) = (
-        images.get(&gpu_data.vert_indices),
-        images.get(&gpu_data.vert_pos),
-        images.get(&gpu_data.vert_nor),
-        images.get(&gpu_data.tri_nor),
-        images.get(&gpu_data.blas),
-        images.get(&gpu_data.static_tlas_data),
-        images.get(&gpu_data.dynamic_tlas_data),
-        images.get(&gpu_data.static_instance_data),
-        images.get(&gpu_data.dynamic_instance_data),
-        images.get(&gpu_data.static_instance_mat),
-        images.get(&gpu_data.dynamic_instance_mat),
-    ) {
-        Some([
-            BindGroupEntry {
-                binding: bindings[0],
-                resource: BindingResource::TextureView(&vert_indices.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[1],
-                resource: BindingResource::TextureView(&vert_positions.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[2],
-                resource: BindingResource::TextureView(&vert_normals.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[3],
-                resource: BindingResource::TextureView(&tri_normals.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[4],
-                resource: BindingResource::TextureView(&blas.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[5],
-                resource: BindingResource::TextureView(&static_tlas_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[6],
-                resource: BindingResource::TextureView(&dynamic_tlas_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[7],
-                resource: BindingResource::TextureView(&static_instance_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[8],
-                resource: BindingResource::TextureView(&dynamic_instance_data.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[9],
-                resource: BindingResource::TextureView(&static_instance_mat.texture_view),
-            },
-            BindGroupEntry {
-                binding: bindings[10],
-                resource: BindingResource::TextureView(&dynamic_instance_mat.texture_view),
-            },
-        ])
-    } else {
-        None
+                // If the entry_index is negative, then it's a leaf node.
+                // Shape index in this case is the index into the vertex indices
+                (-(f.shape_index as i32 + 1), normal)
+            } else {
+                (f.entry_index as i32, Vec3::ZERO)
+            };
+
+            bvh_data.push(BVHData {
+                aabb_min: f.aabb.min,
+                aabb_max: f.aabb.max,
+                tri_nor,
+                entry_or_shape_idx,
+                exit_idx: f.exit_index as i32,
+            })
+        }
+        bvh_data
     }
-}
 
-pub fn get_bind_group_layout_entries(bindings: [u32; 11]) -> [BindGroupLayoutEntry; 11] {
-    [
-        layout_entry_d2(bindings[0], TextureSampleType::Sint),
-        layout_entry_d2(bindings[1], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[2], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[3], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[4], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[5], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[6], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[7], TextureSampleType::Sint),
-        layout_entry_d2(bindings[8], TextureSampleType::Sint),
-        layout_entry_d2(bindings[9], TextureSampleType::Float { filterable: false }),
-        layout_entry_d2(bindings[10], TextureSampleType::Float { filterable: false }),
-    ]
-}
+    fn from_flat_node_tlas(flat_bvh: &[FlatNode]) -> Vec<Self> {
+        let mut bvh_data = Vec::new();
+        for f in flat_bvh.iter() {
+            let (entry_or_shape_idx, tri_nor) = if f.entry_index == u32::MAX {
+                // If the entry_index is negative, then it's a leaf node.
+                // Shape index in this case is the index into the vertex indices
+                (-(f.shape_index as i32 + 1), Vec3::ZERO)
+            } else {
+                (f.entry_index as i32, Vec3::ZERO)
+            };
 
-pub fn layout_entry_d2(binding: u32, sample_type: TextureSampleType) -> BindGroupLayoutEntry {
-    BindGroupLayoutEntry {
-        binding,
-        visibility: ShaderStages::FRAGMENT,
-        ty: BindingType::Texture {
-            sample_type,
-            view_dimension: TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
+            bvh_data.push(BVHData {
+                aabb_min: f.aabb.min,
+                aabb_max: f.aabb.max,
+                tri_nor,
+                entry_or_shape_idx,
+                exit_idx: f.exit_index as i32,
+            });
+        }
+        bvh_data
     }
 }
 

@@ -6,13 +6,12 @@ use bevy::{
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
-        render_asset::RenderAssets,
         render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
             BindGroupLayoutEntry, BindingResource, BindingType, CachedRenderPipelineId, Operations,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor, Sampler,
-            SamplerDescriptor, ShaderStages, ShaderType, TextureSampleType,
+            SamplerDescriptor, ShaderStages, ShaderType, TextureSampleType, TextureViewDimension,
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
@@ -22,10 +21,7 @@ use bevy::{
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    gpu_data::{
-        get_bind_group_layout_entries, get_bindings, get_default_pipeline_desc, layout_entry_d2,
-        sampler_entry, view_entry, GPUDataPlugin, GpuData,
-    },
+    gpu_data::{get_default_pipeline_desc, sampler_entry, view_entry, GPUBuffers, GPUDataPlugin},
     BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
@@ -117,8 +113,7 @@ impl Node for RayTraceNode {
         let view_entity = graph_context.view_entity();
         let view_uniforms: &ViewUniforms = world.resource::<ViewUniforms>();
         let view_uniforms = view_uniforms.uniforms.binding().unwrap();
-        let images = world.resource::<RenderAssets<Image>>();
-        let gpu_data = world.resource::<GpuData>();
+        let gpu_buffers = world.resource::<GPUBuffers>();
 
         let Ok((view_uniform_offset, view_target)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
@@ -134,6 +129,11 @@ impl Node for RayTraceNode {
 
         let settings_uniforms = world.resource::<ComponentUniforms<TraceSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
+            return Ok(());
+        };
+
+        let Some(gpu_buffer_bind_group_entries) = gpu_buffers
+                .bind_group_entries([4, 5, 6, 7, 8, 9, 10]) else {
             return Ok(());
         };
 
@@ -158,11 +158,7 @@ impl Node for RayTraceNode {
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) else {
-            return Ok(());
-        };
-
-        entries.append(&mut rt_bindings.to_vec());
+        entries.append(&mut gpu_buffer_bind_group_entries.to_vec());
 
         let bind_group = render_context
             .render_device()
@@ -203,11 +199,20 @@ impl FromWorld for PostProcessPipeline {
 
         let mut entries = vec![
             view_entry(0),
-            layout_entry_d2(1, TextureSampleType::Float { filterable: true }),
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
             sampler_entry(2),
             BindGroupLayoutEntry {
                 binding: 3,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::FRAGMENT | ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: bevy::render::render_resource::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -217,9 +222,7 @@ impl FromWorld for PostProcessPipeline {
             },
         ];
 
-        entries.append(
-            &mut get_bind_group_layout_entries([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]).to_vec(),
-        );
+        entries.append(&mut GPUBuffers::bind_group_layout_entry([4, 5, 6, 7, 8, 9, 10]).to_vec());
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("post_process_bind_group_layout"),

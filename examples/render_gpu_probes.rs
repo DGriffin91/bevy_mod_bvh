@@ -15,9 +15,7 @@ use bevy::{
         },
         mesh::MeshVertexBufferLayout,
         render_asset::RenderAssets,
-        render_graph::{
-            Node, NodeRunError, RenderGraph, RenderGraphApp, RenderGraphContext, SlotInfo, SlotType,
-        },
+        render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
         render_resource::{
             AsBindGroup, AsBindGroupShaderType, BindGroupDescriptor, BindGroupEntry,
             BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource,
@@ -36,10 +34,7 @@ use bevy::{
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    gpu_data::{
-        get_bind_group_layout_entries, get_bindings, get_default_pipeline_desc, view_entry,
-        GPUDataPlugin, GpuData,
-    },
+    gpu_data::{get_default_pipeline_desc, view_entry, GPUBuffers, GPUDataPlugin},
     BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
 };
 
@@ -150,8 +145,8 @@ impl Node for RayTraceNode {
         let view_uniforms = world.resource::<ViewUniforms>();
         let view_uniforms = view_uniforms.uniforms.binding().unwrap();
         let images = world.resource::<RenderAssets<Image>>();
-        let gpu_data = world.resource::<GpuData>();
         let probe_textures = world.resource::<ProbeTextures>();
+        let gpu_buffers = world.resource::<GPUBuffers>();
 
         let Ok((view_uniform_offset, _view_target)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
@@ -167,6 +162,11 @@ impl Node for RayTraceNode {
 
         let settings_uniforms = world.resource::<ComponentUniforms<TraceSettings>>();
         let Some(settings_binding) = settings_uniforms.uniforms().binding() else {
+            return Ok(());
+        };
+
+        let Some(gpu_buffer_bind_group_entries) = gpu_buffers
+                .bind_group_entries([2, 3, 4, 5, 6, 7, 8]) else {
             return Ok(());
         };
 
@@ -188,20 +188,16 @@ impl Node for RayTraceNode {
                 resource: settings_binding.clone(),
             },
             BindGroupEntry {
-                binding: 13,
+                binding: 9,
                 resource: BindingResource::TextureView(&prev_tex.texture_view),
             },
             BindGroupEntry {
-                binding: 14,
+                binding: 10,
                 resource: BindingResource::TextureView(&next_tex.texture_view),
             },
         ];
 
-        let Some(rt_bindings) = get_bindings(images, gpu_data, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) else {
-            return Ok(());
-        };
-
-        entries.append(&mut rt_bindings.to_vec());
+        entries.append(&mut gpu_buffer_bind_group_entries.to_vec());
 
         let bind_group = render_context
             .render_device()
@@ -252,7 +248,7 @@ impl FromWorld for PostProcessPipeline {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 13,
+                binding: 9,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::StorageTexture {
                     access: StorageTextureAccess::ReadOnly,
@@ -262,7 +258,7 @@ impl FromWorld for PostProcessPipeline {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 14,
+                binding: 10,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::StorageTexture {
                     access: StorageTextureAccess::WriteOnly,
@@ -273,9 +269,7 @@ impl FromWorld for PostProcessPipeline {
             },
         ];
 
-        entries.append(
-            &mut get_bind_group_layout_entries([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).to_vec(),
-        );
+        entries.append(&mut GPUBuffers::bind_group_layout_entry([2, 3, 4, 5, 6, 7, 8]).to_vec());
 
         let layout = render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("post_process_bind_group_layout"),

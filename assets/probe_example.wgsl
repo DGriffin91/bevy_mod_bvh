@@ -1,5 +1,6 @@
 #import "printing.wgsl"
 #import "common.wgsl"
+#import "trace_gpu_types.wgsl"
 
 #import bevy_pbr::mesh_types
 #import bevy_pbr::mesh_view_bindings
@@ -16,32 +17,25 @@ struct TraceSettings {
 @group(0) @binding(1)
 var<uniform> settings: TraceSettings;
 @group(0) @binding(2)
-var vert_indices: texture_2d<i32>;
+var<storage> vertex_buffer: array<VertexData>;
 @group(0) @binding(3)
-var vert_pos: texture_2d<f32>;
+var<storage> index_buffer: array<VertexIndices>;
 @group(0) @binding(4)
-var vert_nor: texture_2d<f32>;
+var<storage> blas_buffer: array<BVHData>;
 @group(0) @binding(5)
-var tri_nor: texture_2d<f32>;
+var<storage> static_tlas_buffer: array<BVHData>;
 @group(0) @binding(6)
-var blas: texture_2d<f32>;
+var<storage> dynamic_tlas_buffer: array<BVHData>;
 @group(0) @binding(7)
-var static_tlas_data: texture_2d<f32>;
+var<storage> static_mesh_instance_buffer: array<InstanceData>;
 @group(0) @binding(8)
-var dynamic_tlas_data: texture_2d<f32>;
+var<storage> dynamic_mesh_instance_buffer: array<InstanceData>;
 @group(0) @binding(9)
-var static_instance_data: texture_2d<i32>;
-@group(0) @binding(10)
-var dynamic_instance_data: texture_2d<i32>;
-@group(0) @binding(11)
-var static_instance_mat: texture_2d<f32>;
-@group(0) @binding(12)
-var dynamic_instance_mat: texture_2d<f32>;
-@group(0) @binding(13)
 var prev_probe_tex: texture_storage_2d<rgba16float,read>;
-@group(0) @binding(14)
+@group(0) @binding(10)
 var next_probe_tex: texture_storage_2d<rgba16float,write>;
 
+#import "traverse_tlas.wgsl"
 #import "tracing.wgsl"
 
 fn get_screen_ray(uv: vec2<f32>) -> Ray {

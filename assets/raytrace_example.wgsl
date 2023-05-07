@@ -1,5 +1,6 @@
 #import "printing.wgsl"
 #import "common.wgsl"
+#import "trace_gpu_types.wgsl"
 
 #import bevy_pbr::mesh_types
 #import bevy_pbr::mesh_view_bindings
@@ -16,29 +17,23 @@ struct TraceSettings {
 }
 @group(0) @binding(3)
 var<uniform> settings: TraceSettings;
-@group(0) @binding(4)
-var vert_indices: texture_2d<i32>;
-@group(0) @binding(5)
-var vert_pos: texture_2d<f32>;
-@group(0) @binding(6)
-var vert_nor: texture_2d<f32>;
-@group(0) @binding(7)
-var tri_nor: texture_2d<f32>;
-@group(0) @binding(8)
-var blas: texture_2d<f32>;
-@group(0) @binding(9)
-var static_tlas_data: texture_2d<f32>;
-@group(0) @binding(10)
-var dynamic_tlas_data: texture_2d<f32>;
-@group(0) @binding(11)
-var static_instance_data: texture_2d<i32>;
-@group(0) @binding(12)
-var dynamic_instance_data: texture_2d<i32>;
-@group(0) @binding(13)
-var static_instance_mat: texture_2d<f32>;
-@group(0) @binding(14)
-var dynamic_instance_mat: texture_2d<f32>;
 
+@group(0) @binding(4)
+var<storage> vertex_buffer: array<VertexData>;
+@group(0) @binding(5)
+var<storage> index_buffer: array<VertexIndices>;
+@group(0) @binding(6)
+var<storage> blas_buffer: array<BVHData>;
+@group(0) @binding(7)
+var<storage> static_tlas_buffer: array<BVHData>;
+@group(0) @binding(8)
+var<storage> dynamic_tlas_buffer: array<BVHData>;
+@group(0) @binding(9)
+var<storage> static_mesh_instance_buffer: array<InstanceData>;
+@group(0) @binding(10)
+var<storage> dynamic_mesh_instance_buffer: array<InstanceData>;
+
+#import "traverse_tlas.wgsl"
 #import "tracing.wgsl"
 
 fn get_screen_ray(uv: vec2<f32>) -> Ray {
@@ -76,12 +71,13 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         // another option would be to tack on a material idx to static_instance_data
         // then order the materials by that idx, this would allow the material layout
         // to not need to be updated when instances change
-
+        var instance: InstanceData;
         if query.static_tlas {
-            normal = get_surface_normal(static_instance_data, static_instance_mat, query.hit);
+            instance = static_mesh_instance_buffer[query.hit.instance_idx];
         } else {
-            normal = get_surface_normal(dynamic_instance_data, dynamic_instance_mat, query.hit);
+            instance = dynamic_mesh_instance_buffer[query.hit.instance_idx];
         }
+        normal = get_surface_normal(instance, query.hit);
 
         col = vec4(vec3(normal), 1.0);
     } else {
@@ -90,8 +86,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     col = print_value(coord, col, 0, f32(settings.fps));
     col = print_value(coord, col, 1, f32(frame));
-    col = print_value(coord, col, 2, f32(get_tlas_max_length(static_tlas_data)));
-    col = print_value(coord, col, 3, f32(get_tlas_max_length(dynamic_tlas_data)));
+    col = print_value(coord, col, 2, f32(arrayLength(&dynamic_tlas_buffer)));
+    col = print_value(coord, col, 3, f32(arrayLength(&static_tlas_buffer)));
 
     return col;
 }
