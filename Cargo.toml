@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { git = "https://github.com/mockersf/bevy", branch = "fix-examples-after-webgpu" }
+bevy = { git = "https://github.com/DGriffin91/bevy", branch = "deferred" }
 bvh = { git = "https://github.com/svenstaro/bvh", rev = "7482cafcbad06ce8b5085a54d55e447ba2f4ad7d" }
 rand = "0.8"
 rand_distr = "0.4"
@@ -14,6 +14,7 @@ bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools
 bytemuck = "1.7"
 num-integer = "0.1"
 nalgebra = { version = "0.32.2", features = ["default", "serde-serialize"] }
+half = "2.3"
 
 [dev-dependencies]
 bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera", branch = "bevy-main" }
@@ -28,4 +29,4 @@ debug = 1
 opt-level = 3
 
 [patch."https://github.com/bevyengine/bevy"]
-bevy = { git = "https://github.com/mockersf/bevy", branch = "fix-examples-after-webgpu" }
+bevy = { git = "https://github.com/DGriffin91/bevy", branch = "deferred" }

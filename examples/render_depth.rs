@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use bevy::{
+    asset::ChangeWatcher,
     math::{vec3, vec4},
     prelude::*,
-    reflect::TypeUuid,
+    reflect::{TypePath, TypeUuid},
     render::{
         camera::CameraProjection,
         render_resource::{
@@ -128,7 +131,8 @@ pub fn camera_trace_depth(
                 }
             }
             test_trace.update(&mut images);
-            for _ in materials.iter_mut() {
+            for mat in materials.iter_mut() {
+                //mat.1.texture = test_trace.image.clone();
                 // just touch materials
             }
         }
@@ -144,7 +148,7 @@ impl Material for CustomMaterial {
 }
 
 // This is the struct that will be passed to your shader
-#[derive(AsBindGroup, Debug, Clone, TypeUuid)]
+#[derive(AsBindGroup, Debug, Clone, TypeUuid, TypePath)]
 #[uuid = "717f64fe-6844-4822-8926-e0ed374294c8"]
 pub struct CustomMaterial {
     #[texture(0)]
@@ -158,8 +162,7 @@ fn main() {
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
-                // Tell the asset server to watch for asset changes on disk:
-                watch_for_changes: true,
+                watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
                 ..default()
             })
             .set(WindowPlugin {

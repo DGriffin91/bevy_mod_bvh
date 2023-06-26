@@ -1,4 +1,4 @@
-use bevy::math::vec3;
+use bevy::math::{vec2, vec3};
 
 use bevy::prelude::*;
 
@@ -13,7 +13,10 @@ use bevy::utils::HashMap;
 use bevy_mod_mesh_tools::{mesh_normals, mesh_positions};
 
 use bvh::flat_bvh::FlatNode;
+use half::f16;
 
+use crate::packing::{octa_decode, octa_encode};
+use crate::rgb9e5::{rgb9e5_to_vec3, vec3_to_rgb9e5, vec3_to_rgb9e5_roundup};
 use crate::{
     bind_group_layout_entry, some_binding_or_return_none, DynamicTLASData, StaticTLASData, BLAS,
 };
@@ -34,12 +37,51 @@ impl Plugin for GPUDataPlugin {
 }
 
 #[derive(ShaderType)]
-pub struct VertexData {
-    pub position: Vec3,
-    pub normal: Vec3,
+pub struct VertexDataPacked {
+    pub data1: u32,
+    pub data2: u32,
 }
 
-impl VertexData {
+impl VertexDataPacked {
+    pub fn pack(position: Vec3, normal: Vec3) -> Self {
+        let mut data1 = f16::from_f32(position.x).to_bits() as u32;
+        data1 |= (f16::from_f32(position.y).to_bits() as u32) << 16;
+        let mut data2 = f16::from_f32(position.z).to_bits() as u32;
+        let oct = octa_encode(normal);
+        data2 |= ((oct.x.clamp(0.0, 1.0) * 255.0 + 0.5) as u32) << 16;
+        data2 |= ((oct.y.clamp(0.0, 1.0) * 255.0 + 0.5) as u32) << 24;
+        Self { data1, data2 }
+    }
+    pub fn unpack(&self) -> (Vec3, Vec3) {
+        let pos = vec3(
+            f16::from_bits((self.data1 & 0xffff) as u16).to_f32(),
+            f16::from_bits((self.data1 >> 16 & 0xffff) as u16).to_f32(),
+            f16::from_bits((self.data2 & 0xffff) as u16).to_f32(),
+        );
+        let octn = vec2(
+            (self.data2 >> 16 & 0xff) as f32,
+            (self.data2 >> 24 & 0xff) as f32,
+        ) / 255.0;
+        let n = octa_decode(octn);
+        (pos, n)
+    }
+}
+
+#[test]
+fn vertex_data_pack_test() {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    for _ in 0..10000 {
+        let pos = vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()) * 100.0;
+        let nor = vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()).normalize();
+        let data = VertexDataPacked::pack(pos, nor);
+        let (b_pos, b_nor) = data.unpack();
+        assert!(pos.distance(b_pos) < 0.06);
+        assert!(b_nor.dot(nor) > 0.999);
+    }
+}
+
+impl VertexDataPacked {
     bind_group_layout_entry!();
 }
 
@@ -73,27 +115,39 @@ impl VertexIndices {
 }
 
 #[derive(ShaderType)]
-pub struct BVHData {
+pub struct TLASBVHData {
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
-    // precomputed triangle normals
-    pub tri_nor: Vec3, //TODO use smaller, less precise format
-    //if positive: entry_idx if negative: -shape_idx
+    //if positive: entry_idx, if negative: -shape_idx
     pub entry_or_shape_idx: i32,
     pub exit_idx: i32,
 }
 
-impl BVHData {
+impl TLASBVHData {
+    bind_group_layout_entry!();
+}
+
+#[derive(ShaderType)]
+pub struct BLASBVHData {
+    pub aabb_minxy: u32, // f16 min x, y
+    pub aabb_maxxy: u32, // f16 max x, y
+    pub aabb_z: u32,     // f16 min z, max z
+    //if positive: entry_idx, if negative: -shape_idx
+    pub entry_or_shape_idx: i32,
+    pub exit_idx: i32,
+}
+
+impl BLASBVHData {
     bind_group_layout_entry!();
 }
 
 #[derive(Resource, Default)]
 pub struct GPUBuffers {
-    pub vertex_data_buffer: StorageBuffer<Vec<VertexData>>,
+    pub vertex_data_buffer: StorageBuffer<Vec<VertexDataPacked>>,
     pub index_data_buffer: StorageBuffer<Vec<VertexIndices>>,
-    pub blas_data_buffer: StorageBuffer<Vec<BVHData>>,
-    pub static_tlas_data_buffer: StorageBuffer<Vec<BVHData>>,
-    pub dynamic_tlas_data_buffer: StorageBuffer<Vec<BVHData>>,
+    pub blas_data_buffer: StorageBuffer<Vec<BLASBVHData>>,
+    pub static_tlas_data_buffer: StorageBuffer<Vec<TLASBVHData>>,
+    pub dynamic_tlas_data_buffer: StorageBuffer<Vec<TLASBVHData>>,
     pub static_mesh_instance_data_buffer: StorageBuffer<Vec<InstanceData>>,
     pub dynamic_mesh_instance_data_buffer: StorageBuffer<Vec<InstanceData>>,
 }
@@ -101,11 +155,11 @@ pub struct GPUBuffers {
 impl GPUBuffers {
     pub fn bind_group_layout_entry(bindings: [u32; 7]) -> [BindGroupLayoutEntry; 7] {
         [
-            VertexData::bind_group_layout_entry(bindings[0]),
+            VertexDataPacked::bind_group_layout_entry(bindings[0]),
             VertexIndices::bind_group_layout_entry(bindings[1]),
-            BVHData::bind_group_layout_entry(bindings[2]),
-            BVHData::bind_group_layout_entry(bindings[3]),
-            BVHData::bind_group_layout_entry(bindings[4]),
+            BLASBVHData::bind_group_layout_entry(bindings[2]),
+            TLASBVHData::bind_group_layout_entry(bindings[3]),
+            TLASBVHData::bind_group_layout_entry(bindings[4]),
             InstanceData::bind_group_layout_entry(bindings[5]),
             InstanceData::bind_group_layout_entry(bindings[6]),
         ]
@@ -206,15 +260,12 @@ pub fn extract_gpu_data(
             };
 
             for (p, n) in mesh_positions(mesh).zip(mesh_normals(mesh)) {
-                vertex_data.push(VertexData {
-                    position: *p,
-                    normal: *n,
-                })
+                vertex_data.push(VertexDataPacked::pack(*p, *n));
             }
 
             let flat_bvh = mesh_blas.bvh.flatten();
             // TODO keep binary mesh data around
-            blas_data.append(&mut BVHData::from_flat_node_blas(
+            blas_data.append(&mut BLASBVHData::from_flat_node(
                 &flat_bvh,
                 vertex_start,
                 &vertex_data,
@@ -241,7 +292,7 @@ pub fn extract_gpu_data(
     if static_tlas.is_changed() {
         if let Some(bvh) = &static_tlas.0.bvh {
             gpu_buffers.static_tlas_data_buffer = new_storage_buffer(
-                BVHData::from_flat_node_tlas(&bvh.flatten()),
+                TLASBVHData::from_flat_node(&bvh.flatten()),
                 "tlas_data",
                 &render_device,
                 &render_queue,
@@ -251,7 +302,7 @@ pub fn extract_gpu_data(
     if dynamic_tlas.is_changed() {
         if let Some(bvh) = &dynamic_tlas.0.bvh {
             gpu_buffers.dynamic_tlas_data_buffer = new_storage_buffer(
-                BVHData::from_flat_node_tlas(&bvh.flatten()),
+                TLASBVHData::from_flat_node(&bvh.flatten()),
                 "tlas_data",
                 &render_device,
                 &render_queue,
@@ -307,24 +358,27 @@ pub fn extract_gpu_data(
     }
 }
 
-impl BVHData {
-    fn from_flat_node_blas(
+impl BLASBVHData {
+    fn from_flat_node(
         flat_bvh: &[FlatNode<f32, 3>],
         vertex_start: usize,
-        vertex_data: &[VertexData],
+        vertex_data: &[VertexDataPacked],
         index_data: &[VertexIndices],
         index_start: usize,
     ) -> Vec<Self> {
         let mut bvh_data = Vec::new();
         for f in flat_bvh.iter() {
-            let (entry_or_shape_idx, tri_nor) = if f.entry_index == u32::MAX {
+            let (entry_or_shape_idx, _tri_nor) = if f.entry_index == u32::MAX {
                 let ind = f.shape_index as usize * 3;
                 let a = vertex_data[vertex_start + index_data[index_start + ind + 0].idx as usize]
-                    .position;
+                    .unpack()
+                    .0;
                 let b = vertex_data[vertex_start + index_data[index_start + ind + 1].idx as usize]
-                    .position;
+                    .unpack()
+                    .0;
                 let c = vertex_data[vertex_start + index_data[index_start + ind + 2].idx as usize]
-                    .position;
+                    .unpack()
+                    .0;
 
                 let v1 = b - a;
                 let v2 = c - a;
@@ -338,22 +392,40 @@ impl BVHData {
                 (f.entry_index as i32, Vec3::ZERO)
             };
 
-            bvh_data.push(BVHData {
-                //TODO is there something faster? Transmute?
-                aabb_min: vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]),
-                aabb_max: vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]),
-                tri_nor,
+            let (aabb_min, aabb_max) = if f32::is_finite(f.aabb.min[0]) {
+                let aabb_min = vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]);
+                let aabb_max = vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]);
+                (aabb_min, aabb_max - aabb_min)
+            } else {
+                (Vec3::ZERO, Vec3::ZERO)
+            };
+
+            let mut aabb_minxy = f16::from_f32(aabb_min.x).to_bits() as u32;
+            aabb_minxy |= (f16::from_f32(aabb_min.y).to_bits() as u32) << 16;
+
+            let mut aabb_maxxy = f16::from_f32(aabb_max.x).to_bits() as u32;
+            aabb_maxxy |= (f16::from_f32(aabb_max.y).to_bits() as u32) << 16;
+
+            let mut aabb_z = f16::from_f32(aabb_min.z).to_bits() as u32;
+            aabb_z |= (f16::from_f32(aabb_max.z).to_bits() as u32) << 16;
+
+            bvh_data.push(BLASBVHData {
+                aabb_minxy,
+                aabb_maxxy,
+                aabb_z,
                 entry_or_shape_idx,
                 exit_idx: f.exit_index as i32,
             })
         }
         bvh_data
     }
+}
 
-    fn from_flat_node_tlas(flat_bvh: &[FlatNode<f32, 3>]) -> Vec<Self> {
+impl TLASBVHData {
+    fn from_flat_node(flat_bvh: &[FlatNode<f32, 3>]) -> Vec<Self> {
         let mut bvh_data = Vec::new();
         for f in flat_bvh.iter() {
-            let (entry_or_shape_idx, tri_nor) = if f.entry_index == u32::MAX {
+            let (entry_or_shape_idx, _tri_nor) = if f.entry_index == u32::MAX {
                 // If the entry_index is negative, then it's a leaf node.
                 // Shape index in this case is the index into the vertex indices
                 (-(f.shape_index as i32 + 1), Vec3::ZERO)
@@ -361,10 +433,17 @@ impl BVHData {
                 (f.entry_index as i32, Vec3::ZERO)
             };
 
-            bvh_data.push(BVHData {
-                aabb_min: vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]),
-                aabb_max: vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]),
-                tri_nor,
+            let (aabb_min, aabb_max) = if f32::is_finite(f.aabb.min[0]) {
+                let aabb_min = vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]);
+                let aabb_max = vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]);
+                (aabb_min, aabb_max - aabb_min)
+            } else {
+                (Vec3::ZERO, Vec3::ZERO)
+            };
+
+            bvh_data.push(TLASBVHData {
+                aabb_min,
+                aabb_max,
                 entry_or_shape_idx,
                 exit_idx: f.exit_index as i32,
             });

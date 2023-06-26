@@ -1,3 +1,4 @@
+#import "rgb9e5.wgsl"
 #import "printing.wgsl"
 #import "common.wgsl"
 #import "trace_gpu_types.wgsl"
@@ -19,19 +20,21 @@ struct TraceSettings {
 var<uniform> settings: TraceSettings;
 
 @group(0) @binding(4)
-var<storage> vertex_buffer: array<VertexData>;
+var<storage> vertex_buffer: array<VertexDataPacked>;
 @group(0) @binding(5)
 var<storage> index_buffer: array<VertexIndices>;
 @group(0) @binding(6)
-var<storage> blas_buffer: array<BVHData>;
+var<storage> blas_buffer: array<BLASBVHData>;
 @group(0) @binding(7)
-var<storage> static_tlas_buffer: array<BVHData>;
+var<storage> static_tlas_buffer: array<TLASBVHData>;
 @group(0) @binding(8)
-var<storage> dynamic_tlas_buffer: array<BVHData>;
+var<storage> dynamic_tlas_buffer: array<TLASBVHData>;
 @group(0) @binding(9)
 var<storage> static_mesh_instance_buffer: array<InstanceData>;
 @group(0) @binding(10)
 var<storage> dynamic_mesh_instance_buffer: array<InstanceData>;
+
+#define RT_STATS
 
 #import "traverse_tlas.wgsl"
 #import "tracing.wgsl"
@@ -59,7 +62,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     let ray = get_screen_ray(uv);
 
-    let query = scene_query(ray);
+    let query = scene_query(ray, F32_MAX);
 
     if query.hit.distance != F32_MAX {
         var normal = vec3(0.0);
@@ -77,12 +80,14 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         } else {
             instance = dynamic_mesh_instance_buffer[query.hit.instance_idx];
         }
-        normal = get_surface_normal(instance, query.hit);
+        normal = get_surface_normal(query);
 
         col = vec4(vec3(normal), 1.0);
     } else {
         col = vec4(0.0);    
     }
+
+    col = vec4(temperature(f32(query.stats.aabb_hit_blas + query.stats.aabb_hit_tlas), 50.0), 1.0);
 
     col = print_value(coord, col, 0, f32(settings.fps));
     col = print_value(coord, col, 1, f32(frame));

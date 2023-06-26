@@ -9,12 +9,6 @@ const F32_EPSILON: f32 = 1.1920929E-7;
 const F32_MAX: f32 = 3.402823466E+38;
 const U32_MAX: u32 = 0xFFFFFFFFu;
 
-
-const PROBE_RES_SCALE: i32 = 8;
-const PROBE_RES_SCALEF: f32 = 8.0;
-
-
-
 fn rand(co: f32) -> f32 { 
     return fract(sin(co*(91.3458)) * 47453.5453); 
 }

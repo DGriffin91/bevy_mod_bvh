@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use bevy::{
+    asset::ChangeWatcher,
     core_pipeline::core_3d,
-    diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
+    diagnostic::FrameTimeDiagnosticsPlugin,
     prelude::*,
     render::{
         extract_component::{
@@ -33,7 +36,7 @@ fn main() {
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    watch_for_changes: true,
+                    watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
                     ..default()
                 })
                 .set(WindowPlugin {
@@ -239,7 +242,7 @@ impl FromWorld for PostProcessPipeline {
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
 struct TraceSettings {
     frame: u32,
-    fps: f32,
+    frame_time: f32,
 }
 
 /// set up a simple 3D scene
@@ -292,7 +295,10 @@ fn setup(
             ..default()
         })
         .insert(CameraController::default())
-        .insert(TraceSettings { frame: 0, fps: 0.0 });
+        .insert(TraceSettings {
+            frame: 0,
+            frame_time: 0.0,
+        });
 }
 
 fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -346,13 +352,11 @@ fn cube_rotator(
     }
 }
 
-fn update_settings(mut settings: Query<&mut TraceSettings>, diagnostics: Res<Diagnostics>) {
+fn update_settings(mut settings: Query<&mut TraceSettings>, time: Res<Time>) {
     for mut setting in &mut settings {
         setting.frame = setting.frame.wrapping_add(1);
-        if let Some(diag) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-            let hysteresis = 0.9;
-            let fps = hysteresis + diag.value().unwrap_or(0.0) as f32;
-            setting.fps = setting.fps * hysteresis + fps * (1.0 - hysteresis);
-        }
+        let hysteresis = 0.03;
+        let ms = time.delta_seconds() * 1000.0;
+        setting.frame_time = ms * hysteresis + setting.frame_time * (1.0 - hysteresis);
     }
 }
