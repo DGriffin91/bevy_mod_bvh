@@ -115,12 +115,10 @@ pub fn update_tlas(
 ) {
     if !update.0 .0 {
         let mut static_aabbs = Vec::new();
-        for (entity, trans, aabb, _visibility) in &static_entities {
-            // TODO is not always showing all entities (tested in new sponza).
-            // maybe some are not visible yet? Try reenabling after moving to extract.
-            //if !visibility.is_visible() {
-            //    continue;
-            //}
+        for (entity, trans, aabb, visibility) in &static_entities {
+            if !visibility.is_visible() {
+                continue;
+            }
             static_aabbs.push(TLASAABB::new(entity, aabb, trans));
         }
         if !static_aabbs.is_empty() {

@@ -48,28 +48,6 @@ fn _vec3_to_rgb9e5(rgb: vec3<f32>) -> u32 {
     return (u32(exp_shared) << 27u) | (bm << 18u) | (gm << 9u) | (rm << 0u);
 }
 
-fn vec3_to_rgb9e5_roundup(rgb: vec3<f32>) -> u32 {
-    let rc = clamp(rgb.x, 0.0, _MAX_RGB9E5);
-    let gc = clamp(rgb.y, 0.0, _MAX_RGB9E5);
-    let bc = clamp(rgb.z, 0.0, _MAX_RGB9E5);
-
-    let maxrgb = max(rc, max(gc, bc));
-    var exp_shared = max(-_RGB9E5_EXP_BIAS - 1, floor_log2(maxrgb)) + 1 + _RGB9E5_EXP_BIAS;
-    var denom = exp2(f32(exp_shared - _RGB9E5_EXP_BIAS - _RGB9E5_MANTISSA_BITS));
-
-    let maxm = i32(floor(maxrgb / denom + 0.5));
-    if (maxm == _MAX_RGB9E5_MANTISSA + 1) {
-        denom *= 2.0;
-        exp_shared += 1;
-    }
-
-    let rm = min(u32(ceil(rc / denom)), _MAX_RGB9E5_MANTISSAU);
-    let gm = min(u32(ceil(gc / denom)), _MAX_RGB9E5_MANTISSAU);
-    let bm = min(u32(ceil(bc / denom)), _MAX_RGB9E5_MANTISSAU);
-
-    return (u32(exp_shared) << 27u) | (bm << 18u) | (gm << 9u) | (rm << 0u);
-}
-
 fn _bitfield_extract(value: u32, offset: u32, bits: u32) -> u32 {
     let mask = (1u << bits) - 1u;
     return (value >> offset) & mask;

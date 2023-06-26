@@ -20,7 +20,12 @@ fn octa_decode(f: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
-struct VertexData { //192 bits
+struct VertexDataPacked {
+    data1: u32,
+    data2: u32,
+}
+
+struct VertexData {
     position: vec3<f32>,
     normal: vec3<f32>,
 }
@@ -43,11 +48,6 @@ fn VertexData_unpack_pos(in: VertexDataPacked) -> vec3<f32> {
     let pos_xy = unpack2x16float(in.data1);
     let pos_z = unpack2x16float(in.data2).x;
     return vec3(pos_xy, pos_z);
-}
-
-struct VertexDataPacked {
-    data1: u32,
-    data2: u32,
 }
 
 struct MeshData {

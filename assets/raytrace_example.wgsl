@@ -87,7 +87,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         col = vec4(0.0);    
     }
 
-    col = vec4(temperature(f32(query.stats.aabb_hit_blas + query.stats.aabb_hit_tlas), 50.0), 1.0);
+    //col = vec4(temperature(f32(query.stats.aabb_hit_blas + query.stats.aabb_hit_tlas), 50.0), 1.0);
 
     col = print_value(coord, col, 0, f32(settings.fps));
     col = print_value(coord, col, 1, f32(frame));
