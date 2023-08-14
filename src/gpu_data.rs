@@ -394,7 +394,7 @@ impl BLASBVHData {
             let (aabb_min, aabb_max) = if f32::is_finite(f.aabb.min[0]) {
                 let aabb_min = vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]);
                 let aabb_max = vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]);
-                (aabb_min, aabb_max - aabb_min)
+                (aabb_min, aabb_max)
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             };
@@ -435,7 +435,7 @@ impl TLASBVHData {
             let (aabb_min, aabb_max) = if f32::is_finite(f.aabb.min[0]) {
                 let aabb_min = vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]);
                 let aabb_max = vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]);
-                (aabb_min, aabb_max - aabb_min)
+                (aabb_min, aabb_max)
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             };

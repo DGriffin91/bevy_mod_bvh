@@ -267,7 +267,7 @@ fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit:
             let aabb_maxxy = unpack2x16float(blas.aabb_maxxy);
             let aabb_z = unpack2x16float(blas.aabb_z);
             let aabb_min = vec3(aabb_minxy, aabb_z.x);
-            let aabb_max = vec3(aabb_maxxy, aabb_z.y) + aabb_min;
+            let aabb_max = vec3(aabb_maxxy, aabb_z.y);
             next_idx = select(blas.exit_idx, 
                               blas.entry_or_shape_idx, 
                               intersects_aabb(ray, aabb_min, aabb_max) < min_dist);
@@ -483,7 +483,7 @@ fn static_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
             // If entry_index is not -1 and the AABB test fails, then
             // proceed to the node in exit_index (which defines the next untested partition).
             let aabb_min = tlas.aabb_min.xyz;
-            let aabb_max = tlas.aabb_max.xyz + aabb_min;
+            let aabb_max = tlas.aabb_max.xyz;
             next_idx = select(tlas.exit_idx, 
                               tlas.entry_or_shape_idx, 
                               intersects_aabb(ray, aabb_min, aabb_max) < min_dist);   
@@ -562,7 +562,7 @@ fn dynamic_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
             // If entry_index is not -1 and the AABB test fails, then
             // proceed to the node in exit_index (which defines the next untested partition).
             let aabb_min = tlas.aabb_min.xyz;
-            let aabb_max = tlas.aabb_max.xyz + aabb_min;
+            let aabb_max = tlas.aabb_max.xyz;
             next_idx = select(tlas.exit_idx, 
                               tlas.entry_or_shape_idx, 
                               intersects_aabb(ray, aabb_min, aabb_max) < min_dist);   
