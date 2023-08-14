@@ -306,15 +306,21 @@ fn setup(
 }
 
 fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
+    //commands.spawn(SceneBundle {
+    //    scene: asset_server.load(
+    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Main_glTF_002.gltf#Scene0",
+    //    ),
+    //    ..default()
+    //});
+    //commands.spawn(SceneBundle {
+    //    scene: asset_server.load(
+    //        "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+    //    ),
+    //    ..default()
+    //});
     commands.spawn(SceneBundle {
         scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Main_glTF_002.gltf#Scene0",
-        ),
-        ..default()
-    });
-    commands.spawn(SceneBundle {
-        scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/sponza/NewSponza_Curtains_glTF.gltf#Scene0",
+            "H:/dev/programming/rust/bevy/bevy_mod_bvh/kitchen_gltf_no_window_cover.gltf#Scene0",
         ),
         ..default()
     });
