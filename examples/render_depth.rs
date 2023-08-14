@@ -131,7 +131,7 @@ pub fn camera_trace_depth(
                 }
             }
             test_trace.update(&mut images);
-            for mat in materials.iter_mut() {
+            for _mat in materials.iter_mut() {
                 //mat.1.texture = test_trace.image.clone();
                 // just touch materials
             }
@@ -174,9 +174,11 @@ fn main() {
             }),
     )
     .add_systems(Startup, setup)
-    .add_plugin(BVHPlugin)
-    .add_plugin(MaterialPlugin::<CustomMaterial>::default())
-    .add_plugin(CameraControllerPlugin)
+    .add_plugins((
+        BVHPlugin,
+        MaterialPlugin::<CustomMaterial>::default(),
+        CameraControllerPlugin,
+    ))
     .add_systems(Update, (camera_trace_depth, cube_rotator))
     .run();
 }

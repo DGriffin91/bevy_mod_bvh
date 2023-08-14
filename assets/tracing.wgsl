@@ -1,3 +1,18 @@
+#import "trace_gpu_types.wgsl" as gputypes
+#import "raytrace_bindings_types.wgsl" as bindings
+
+const PHI = 1.618033988749895; // Golden Ratio
+const TAU = 6.28318530717958647692528676655900577;
+
+const INV_TAU: f32 = 0.159154943;
+const PHIMINUS1_: f32 = 0.61803398875;
+
+const F32_EPSILON: f32 = 1.1920929E-7;
+const F32_MAX: f32 = 3.402823466E+38;
+const F16_MAX: f32 = 65504.0;
+
+const U32_MAX: u32 = 0xFFFFFFFFu;
+
 struct Ray {
     origin: vec3<f32>,
     direction: vec3<f32>,
@@ -197,7 +212,7 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     return result;
 }
 
-fn traverse_blas(instance: MeshData, ray: Ray, min_dist: f32, any_hit: bool,
+fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit: bool,
 #ifdef RT_STATS
     stats: ptr<function, Stats>
 #endif
@@ -209,16 +224,16 @@ fn traverse_blas(instance: MeshData, ray: Ray, min_dist: f32, any_hit: bool,
     var aabb_inter = vec2(0.0);
     var min_dist = min(min_dist, F32_MAX);
     while (next_idx < instance.blas_count) {
-        let blas = blas_buffer[next_idx + instance.blas_start];
+        let blas = bindings::blas_buffer[next_idx + instance.blas_start];
         if blas.entry_or_shape_idx < 0 {
             let triangle_idx = (blas.entry_or_shape_idx + 1) * -3;
             // If the entry_index is negative, then it's a leaf node.
-            let ind1 = i32(index_buffer[triangle_idx + 0 + instance.vert_idx_start].idx);
-            let ind2 = i32(index_buffer[triangle_idx + 1 + instance.vert_idx_start].idx);
-            let ind3 = i32(index_buffer[triangle_idx + 2 + instance.vert_idx_start].idx);            
-            let p1 = VertexData_unpack_pos(vertex_buffer[ind1 + instance.vert_data_start]);
-            let p2 = VertexData_unpack_pos(vertex_buffer[ind2 + instance.vert_data_start]);
-            let p3 = VertexData_unpack_pos(vertex_buffer[ind3 + instance.vert_data_start]);
+            let ind1 = i32(bindings::index_buffer[triangle_idx + 0 + instance.vert_idx_start].idx);
+            let ind2 = i32(bindings::index_buffer[triangle_idx + 1 + instance.vert_idx_start].idx);
+            let ind3 = i32(bindings::index_buffer[triangle_idx + 2 + instance.vert_idx_start].idx);            
+            let p1 = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind1 + instance.vert_data_start]);
+            let p2 = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind2 + instance.vert_data_start]);
+            let p3 = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind3 + instance.vert_data_start]);
 
             // vert order is acb?
             let intr = intersects_triangle(ray, p1, p3, p2);
@@ -326,23 +341,23 @@ fn scene_query_any_hit(ray: Ray, max_ray_dist: f32) -> bool {
 // Inefficient, don't use this if getting more than normal.
 fn get_surface_normal(query: SceneQuery) -> vec3<f32> {
     
-    var instance: InstanceData;
+    var instance: gputypes::InstanceData;
     if query.static_tlas {
-        instance = static_mesh_instance_buffer[query.hit.instance_idx];
+        instance = bindings::static_mesh_instance_buffer[query.hit.instance_idx];
     } else {
-        instance = dynamic_mesh_instance_buffer[query.hit.instance_idx];
+        instance = bindings::dynamic_mesh_instance_buffer[query.hit.instance_idx];
     }
 
     let mesh_pos_start = i32(instance.mesh_data.vert_data_start);
     let mesh_index_start = i32(instance.mesh_data.vert_idx_start);
 
-    let ind1 = i32(index_buffer[query.hit.triangle_idx + 0 + mesh_index_start].idx);
-    let ind2 = i32(index_buffer[query.hit.triangle_idx + 1 + mesh_index_start].idx);
-    let ind3 = i32(index_buffer[query.hit.triangle_idx + 2 + mesh_index_start].idx);
+    let ind1 = i32(bindings::index_buffer[query.hit.triangle_idx + 0 + mesh_index_start].idx);
+    let ind2 = i32(bindings::index_buffer[query.hit.triangle_idx + 1 + mesh_index_start].idx);
+    let ind3 = i32(bindings::index_buffer[query.hit.triangle_idx + 2 + mesh_index_start].idx);
     
-    let a = VertexData_unpack(vertex_buffer[ind1 + mesh_pos_start]).normal;
-    let b = VertexData_unpack(vertex_buffer[ind2 + mesh_pos_start]).normal;
-    let c = VertexData_unpack(vertex_buffer[ind3 + mesh_pos_start]).normal;
+    let a = gputypes::VertexData_unpack(bindings::vertex_buffer[ind1 + mesh_pos_start]).normal;
+    let b = gputypes::VertexData_unpack(bindings::vertex_buffer[ind2 + mesh_pos_start]).normal;
+    let c = gputypes::VertexData_unpack(bindings::vertex_buffer[ind3 + mesh_pos_start]).normal;
 
     // Barycentric Coordinates
     let u = query.hit.uv.x;
@@ -357,23 +372,23 @@ fn get_surface_normal(query: SceneQuery) -> vec3<f32> {
 }
 
 fn compute_tri_normal(query: SceneQuery) -> vec3<f32> {
-    var instance: InstanceData;
+    var instance: gputypes::InstanceData;
     if query.static_tlas {
-        instance = static_mesh_instance_buffer[query.hit.instance_idx];
+        instance = bindings::static_mesh_instance_buffer[query.hit.instance_idx];
     } else {
-        instance = dynamic_mesh_instance_buffer[query.hit.instance_idx];
+        instance = bindings::dynamic_mesh_instance_buffer[query.hit.instance_idx];
     }
 
     let mesh_pos_start = i32(instance.mesh_data.vert_data_start);
     let mesh_index_start = i32(instance.mesh_data.vert_idx_start);
     
-    let ind1 = i32(index_buffer[query.hit.triangle_idx + 0 + mesh_index_start].idx);
-    let ind2 = i32(index_buffer[query.hit.triangle_idx + 1 + mesh_index_start].idx);
-    let ind3 = i32(index_buffer[query.hit.triangle_idx + 2 + mesh_index_start].idx);
+    let ind1 = i32(bindings::index_buffer[query.hit.triangle_idx + 0 + mesh_index_start].idx);
+    let ind2 = i32(bindings::index_buffer[query.hit.triangle_idx + 1 + mesh_index_start].idx);
+    let ind3 = i32(bindings::index_buffer[query.hit.triangle_idx + 2 + mesh_index_start].idx);
     
-    let a = VertexData_unpack_pos(vertex_buffer[ind1 + mesh_pos_start]);
-    let b = VertexData_unpack_pos(vertex_buffer[ind2 + mesh_pos_start]);
-    let c = VertexData_unpack_pos(vertex_buffer[ind3 + mesh_pos_start]);
+    let a = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind1 + mesh_pos_start]);
+    let b = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind2 + mesh_pos_start]);
+    let c = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind3 + mesh_pos_start]);
 
     let v1 = b - a;
     let v2 = c - a;
@@ -384,3 +399,184 @@ fn compute_tri_normal(query: SceneQuery) -> vec3<f32> {
 
     return normal; 
 }
+
+
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+
+// instance_data: ptr<storage, array<InstanceData>>
+// Argument 'instance_data' at index 0 is a pointer of space Storage { access: LOAD }, which can't be passed into functions.
+// need to figure out a way to not have to duplicate these functions
+// seems like storage arrays cant be passed
+// bindless would probably work, but isn't supported in webgpu
+
+// IF ONE OF THESE FUNCTIONS ARE UPDATED, THEY ALL SHOULD BE
+
+fn static_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
+#ifdef RT_STATS
+    stats: ptr<function, Stats>
+#endif
+) -> Hit {
+    var next_idx = 0;
+    var temp_return = vec4(0.0);
+    var hit: Hit;
+    hit.distance = F32_MAX;
+    var min_dist = min_dist; //min(min_dist, F32_MAX);
+    while (next_idx < i32(arrayLength(&bindings::static_tlas_buffer))) {
+        let tlas = bindings::static_tlas_buffer[next_idx];
+        if tlas.entry_or_shape_idx < 0 {
+            // If the entry_index is negative, then it's a leaf node.
+            // Shape index in this case is the mesh entity instance index
+            // Look up the equivalent info as: static_tlas.0.aabbs[shape_index].entity
+            let instance_idx = (tlas.entry_or_shape_idx + 1) * -1;
+
+            let instance = bindings::static_mesh_instance_buffer[instance_idx];
+
+            let world_to_local = instance.world_to_local;
+            let local_to_world = instance.local_to_world;
+
+            // Transform ray into local instance space
+            var local_ray: Ray;
+            local_ray.origin = (world_to_local * vec4(ray.origin, 1.0)).xyz;
+            local_ray.direction = normalize((world_to_local * vec4(ray.direction, 0.0)).xyz);
+            local_ray.inv_direction = 1.0 / local_ray.direction;
+
+            //because of non uniform scale, TODO is there a faster way?
+            let world_minp = ray.origin + ray.direction * min_dist;
+            let local_minp = (world_to_local * vec4(world_minp, 1.0)).xyz;
+
+            var new_hit = traverse_blas(instance.mesh_data, local_ray, distance(local_ray.origin, local_minp), any_hit,
+#ifdef RT_STATS  
+            stats
+#endif
+            );
+            
+            if new_hit.distance < F32_MAX {
+                if any_hit {
+                    new_hit.distance = 0.0;
+                    return new_hit;
+                }
+                //because of non uniform scale, TODO is there a faster way?
+                let local_hitp = local_ray.origin + local_ray.direction * new_hit.distance;
+                let world_hitp = (local_to_world * vec4(local_hitp, 1.0)).xyz;
+                new_hit.distance = distance(ray.origin, world_hitp);
+
+                if new_hit.distance < min_dist {
+                    hit = new_hit;
+                    hit.instance_idx = instance_idx;
+                    min_dist = min(min_dist, hit.distance);
+                }
+            }
+            // Exit the current node.
+            next_idx = tlas.exit_idx;
+#ifdef RT_STATS                  
+            (*stats).node_traversal += 1u;
+#endif
+        } else {
+            // If entry_index is not -1 and the AABB test passes, then
+            // proceed to the node in entry_index (which goes down the bvh branch).
+
+            // If entry_index is not -1 and the AABB test fails, then
+            // proceed to the node in exit_index (which defines the next untested partition).
+            let aabb_min = tlas.aabb_min.xyz;
+            let aabb_max = tlas.aabb_max.xyz + aabb_min;
+            next_idx = select(tlas.exit_idx, 
+                              tlas.entry_or_shape_idx, 
+                              intersects_aabb(ray, aabb_min, aabb_max) < min_dist);   
+#ifdef RT_STATS                  
+            (*stats).aabb_hit_tlas += 1u;
+#endif
+        }
+    }
+    return hit;
+}
+
+fn dynamic_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
+#ifdef RT_STATS
+    stats: ptr<function, Stats>
+#endif
+) -> Hit {
+    var next_idx = 0;
+    var temp_return = vec4(0.0);
+    var hit: Hit;
+    hit.distance = F32_MAX;
+    var min_dist = min_dist; //min(min_dist, F32_MAX);
+    while (next_idx < i32(arrayLength(&bindings::dynamic_tlas_buffer))) {
+        let tlas = bindings::dynamic_tlas_buffer[next_idx];
+        if tlas.entry_or_shape_idx < 0 {
+            // If the entry_index is negative, then it's a leaf node.
+            // Shape index in this case is the mesh entity instance index
+            // Look up the equivalent info as: dynamic_tlas.0.aabbs[shape_index].entity
+            let instance_idx = (tlas.entry_or_shape_idx + 1) * -1;
+
+            let instance = bindings::dynamic_mesh_instance_buffer[instance_idx];
+
+            let world_to_local = instance.world_to_local;
+            let local_to_world = instance.local_to_world;
+
+            // Transform ray into local instance space
+            var local_ray: Ray;
+            local_ray.origin = (world_to_local * vec4(ray.origin, 1.0)).xyz;
+            local_ray.direction = normalize((world_to_local * vec4(ray.direction, 0.0)).xyz);
+            local_ray.inv_direction = 1.0 / local_ray.direction;
+
+            //because of non uniform scale, TODO is there a faster way?
+            let world_minp = ray.origin + ray.direction * min_dist;
+            let local_minp = (world_to_local * vec4(world_minp, 1.0)).xyz;
+
+            var new_hit = traverse_blas(instance.mesh_data, local_ray, distance(local_ray.origin, local_minp), any_hit,
+#ifdef RT_STATS  
+            stats
+#endif
+            );
+            
+            if new_hit.distance < F32_MAX {
+                if any_hit {
+                    new_hit.distance = 0.0;
+                    return new_hit;
+                }
+                //because of non uniform scale, TODO is there a faster way?
+                let local_hitp = local_ray.origin + local_ray.direction * new_hit.distance;
+                let world_hitp = (local_to_world * vec4(local_hitp, 1.0)).xyz;
+                new_hit.distance = distance(ray.origin, world_hitp);
+
+                if new_hit.distance < min_dist {
+                    hit = new_hit;
+                    hit.instance_idx = instance_idx;
+                    min_dist = min(min_dist, hit.distance);
+                }
+            }
+            // Exit the current node.
+            next_idx = tlas.exit_idx;
+#ifdef RT_STATS                  
+            (*stats).node_traversal += 1u;
+#endif
+        } else {
+            // If entry_index is not -1 and the AABB test passes, then
+            // proceed to the node in entry_index (which goes down the bvh branch).
+
+            // If entry_index is not -1 and the AABB test fails, then
+            // proceed to the node in exit_index (which defines the next untested partition).
+            let aabb_min = tlas.aabb_min.xyz;
+            let aabb_max = tlas.aabb_max.xyz + aabb_min;
+            next_idx = select(tlas.exit_idx, 
+                              tlas.entry_or_shape_idx, 
+                              intersects_aabb(ray, aabb_min, aabb_max) < min_dist);   
+#ifdef RT_STATS                  
+            (*stats).aabb_hit_tlas += 1u;
+#endif
+        }
+    }
+    return hit;
+}
+
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------
+//-------------------------------------------------------

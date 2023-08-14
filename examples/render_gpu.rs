@@ -47,11 +47,13 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugin(PostProcessPlugin)
-        .add_plugin(BVHPlugin)
-        .add_plugin(GPUDataPlugin)
-        .add_plugin(CameraControllerPlugin)
-        .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        .add_plugins((
+            PostProcessPlugin,
+            BVHPlugin,
+            GPUDataPlugin,
+            CameraControllerPlugin,
+            FrameTimeDiagnosticsPlugin::default(),
+        ))
         .add_systems(Startup, (setup, load_sponza))
         .add_systems(Update, (cube_rotator, update_settings))
         .add_systems(Update, set_sponza_tlas.before(BVHSet::BlasTlas))
@@ -61,8 +63,10 @@ fn main() {
 struct PostProcessPlugin;
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(ExtractComponentPlugin::<TraceSettings>::default())
-            .add_plugin(UniformComponentPlugin::<TraceSettings>::default());
+        app.add_plugins((
+            ExtractComponentPlugin::<TraceSettings>::default(),
+            UniformComponentPlugin::<TraceSettings>::default(),
+        ));
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;

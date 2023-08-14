@@ -16,7 +16,6 @@ use bvh::flat_bvh::FlatNode;
 use half::f16;
 
 use crate::packing::{octa_decode, octa_encode};
-use crate::rgb9e5::{rgb9e5_to_vec3, vec3_to_rgb9e5, vec3_to_rgb9e5_roundup};
 use crate::{
     bind_group_layout_entry, some_binding_or_return_none, DynamicTLASData, StaticTLASData, BLAS,
 };

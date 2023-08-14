@@ -21,8 +21,8 @@ fn octa_decode(f: vec2<f32>) -> vec3<f32> {
 }
 
 struct VertexDataPacked {
-    data1: u32,
-    data2: u32,
+    data1_: u32,
+    data2_: u32,
 }
 
 struct VertexData {
@@ -32,12 +32,12 @@ struct VertexData {
 
 fn VertexData_unpack(in: VertexDataPacked) -> VertexData {
     var vertex_data: VertexData;
-    let pos_xy = unpack2x16float(in.data1);
-    let pos_z = unpack2x16float(in.data2).x;
+    let pos_xy = unpack2x16float(in.data1_);
+    let pos_z = unpack2x16float(in.data2_).x;
     vertex_data.position = vec3(pos_xy, pos_z);
     let octn = vec2(
-        f32(in.data2 >> 16u & 0xffu),
-        f32(in.data2 >> 24u & 0xffu),
+        f32(in.data2_ >> 16u & 0xffu),
+        f32(in.data2_ >> 24u & 0xffu),
     ) / 255.0;
     vertex_data.normal = octa_decode(octn);
     return vertex_data;
@@ -45,8 +45,8 @@ fn VertexData_unpack(in: VertexDataPacked) -> VertexData {
 
 fn VertexData_unpack_pos(in: VertexDataPacked) -> vec3<f32> {
     var vertex_data: VertexData;
-    let pos_xy = unpack2x16float(in.data1);
-    let pos_z = unpack2x16float(in.data2).x;
+    let pos_xy = unpack2x16float(in.data1_);
+    let pos_z = unpack2x16float(in.data2_).x;
     return vec3(pos_xy, pos_z);
 }
 
