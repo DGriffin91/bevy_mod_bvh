@@ -319,9 +319,7 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
     //    ..default()
     //});
     commands.spawn(SceneBundle {
-        scene: asset_server.load(
-            "H:/dev/programming/rust/bevy/bevy_mod_bvh/kitchen_gltf_no_window_cover.gltf#Scene0",
-        ),
+        scene: asset_server.load("scenes/kitchen_gltf_no_window_cover.gltf#Scene0"),
         ..default()
     });
 }

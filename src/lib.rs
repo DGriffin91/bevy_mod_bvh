@@ -3,7 +3,6 @@ pub mod gpu_data;
 pub mod pipeline_utils;
 pub mod packing;
 pub mod ray;
-pub mod rgb9e5;
 pub mod trace;
 
 use bevy::math::{vec3, vec3a};

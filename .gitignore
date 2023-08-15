@@ -3,3 +3,4 @@ Cargo.lock
 render_gpu.exe
 imgui.ini
 *.exe
+/assets/scenes
