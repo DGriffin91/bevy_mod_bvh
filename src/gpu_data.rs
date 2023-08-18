@@ -241,7 +241,11 @@ pub fn extract_gpu_data(
         *instance_mesh_data = Vec::new();
         *mesh_data_reverse_map = HashMap::new();
         for (mesh_h, mesh_blas) in blas.0.iter() {
-            let mesh = meshes.get(mesh_h).unwrap();
+            let mesh = if let Some(mesh) = meshes.get(mesh_h) {
+                mesh
+            } else {
+                continue;
+            };
 
             let blas_start = blas_data.len();
             let index_start = index_data.len();
