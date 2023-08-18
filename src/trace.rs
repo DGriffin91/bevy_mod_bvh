@@ -4,7 +4,7 @@ use bvh::ray::Ray;
 use crate::{
     glam_vec3_to_vector3, point3_to_vec3,
     ray::{intersects_triangle, Intersection},
-    vec3_to_point3, Triangle, BLAS, TLAS,
+    vec3_to_point3, TraceMesh, Triangle, BLAS, TLAS,
 };
 
 #[derive(Clone)]
@@ -20,7 +20,7 @@ pub fn append_closest_entities_hit(
     tlas: &TLAS,
     blas: &BLAS,
     scene_ray: &Ray<f32, 3>,
-    entities: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
+    entities: &Query<(Entity, &GlobalTransform, &TraceMesh)>,
     hit_entites: &mut Vec<HitResult>,
 ) {
     let bvh = if let Some(bvh) = &tlas.bvh {
@@ -30,8 +30,8 @@ pub fn append_closest_entities_hit(
     };
     let entity_hits = bvh.traverse(&scene_ray, &tlas.aabbs);
     for entity_hit in entity_hits {
-        if let Ok((entity, trans, mesh_h)) = entities.get(entity_hit.entity) {
-            let binding = blas.0.get(mesh_h);
+        if let Ok((entity, trans, tmesh)) = entities.get(entity_hit.entity) {
+            let binding = blas.0.get(&tmesh.mesh_h);
             let bvh_item = if let Some(bvh_item) = &binding {
                 bvh_item
             } else {
@@ -78,7 +78,7 @@ pub fn append_closest_entities_hit(
 pub fn trace_ray(
     origin: Vec3,
     direction: Vec3,
-    entities: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
+    entities: &Query<(Entity, &GlobalTransform, &TraceMesh)>,
     static_tlas: &TLAS,
     dynamic_tlas: &TLAS,
     blas: &BLAS,
@@ -114,7 +114,7 @@ pub fn trace_ray(
 pub fn trace_visibility_ray(
     origin: Vec3,
     dest: Vec3,
-    entity_bvh: &Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
+    entity_bvh: &Query<(Entity, &GlobalTransform, &TraceMesh)>,
     static_tlas: &TLAS,
     dynamic_tlas: &TLAS,
     blas: &BLAS,
@@ -134,8 +134,8 @@ pub fn trace_visibility_ray(
         Vec::new()
     };
     'outer: for entity_hit in dynamic_entity_hits.iter().chain(statin_entity_hits.iter()) {
-        if let Ok((_entity, trans, mesh_h)) = entity_bvh.get(entity_hit.entity) {
-            let binding = blas.0.get(mesh_h);
+        if let Ok((_entity, trans, tmesh)) = entity_bvh.get(entity_hit.entity) {
+            let binding = blas.0.get(&tmesh.mesh_h);
             let bvh_item = if let Some(bvh_item) = &binding {
                 bvh_item
             } else {

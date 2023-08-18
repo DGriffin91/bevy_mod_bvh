@@ -59,7 +59,7 @@ pub fn check_tlas_need_update(
     static_entities: Query<
         Entity,
         (
-            With<Handle<Mesh>>,
+            With<TraceMesh>,
             With<StaticTLAS>,
             Without<DynamicTLAS>,
             Or<(
@@ -73,7 +73,7 @@ pub fn check_tlas_need_update(
     dynamic_entities: Query<
         Entity,
         (
-            With<Handle<Mesh>>,
+            With<TraceMesh>,
             With<DynamicTLAS>,
             Without<StaticTLAS>,
             Or<(
@@ -91,34 +91,15 @@ pub fn check_tlas_need_update(
 }
 
 pub fn update_tlas(
-    static_entities: Query<
-        (
-            Entity,
-            &GlobalTransform,
-            &bevy::render::primitives::Aabb,
-            &ComputedVisibility,
-        ),
-        (With<Handle<Mesh>>, With<StaticTLAS>),
-    >,
-    dynamic_entities: Query<
-        (
-            Entity,
-            &GlobalTransform,
-            &bevy::render::primitives::Aabb,
-            &ComputedVisibility,
-        ),
-        (With<Handle<Mesh>>, With<DynamicTLAS>),
-    >,
+    static_entities: Query<(Entity, &GlobalTransform, &TraceMesh), With<StaticTLAS>>,
+    dynamic_entities: Query<(Entity, &GlobalTransform, &TraceMesh), With<DynamicTLAS>>,
     (mut static_tlas, mut dynamic_tlas): (ResMut<StaticTLASData>, ResMut<DynamicTLASData>),
     update: Res<TLASUpdateSkip>,
 ) {
     if !update.0 .0 {
         let mut static_aabbs = Vec::new();
-        for (entity, trans, aabb, visibility) in &static_entities {
-            if !visibility.is_visible() {
-                continue;
-            }
-            static_aabbs.push(TLASAABB::new(entity, aabb, trans));
+        for (entity, trans, tmesh) in &static_entities {
+            static_aabbs.push(TLASAABB::new(entity, &tmesh.aabb, trans));
         }
         if !static_aabbs.is_empty() {
             static_tlas.0.bvh = Some(Bvh::build(&mut static_aabbs));
@@ -130,11 +111,8 @@ pub fn update_tlas(
     }
     if !update.0 .1 {
         let mut dynamic_aabbs = Vec::new();
-        for (entity, trans, aabb, visibility) in &dynamic_entities {
-            if !visibility.is_visible() {
-                continue;
-            }
-            dynamic_aabbs.push(TLASAABB::new(entity, aabb, trans));
+        for (entity, trans, tmesh) in &dynamic_entities {
+            dynamic_aabbs.push(TLASAABB::new(entity, &tmesh.aabb, trans));
         }
         if !dynamic_aabbs.is_empty() {
             dynamic_tlas.0.bvh = Some(Bvh::build(&mut dynamic_aabbs));
@@ -149,6 +127,15 @@ pub fn update_tlas(
 // Bottom-Level Acceleration Structure
 #[derive(Default, Resource)]
 pub struct BLAS(pub HashMap<Handle<Mesh>, MeshBVHItem>);
+
+// The mesh to be used for tracing.
+// This is to allow the user to specify a different mesh for tracing or to allow the user to remove
+// the Handle<Mesh> component from the entity to keep bevy from trying to use it in the render.
+#[derive(Component, Clone)]
+pub struct TraceMesh {
+    pub mesh_h: Handle<Mesh>,
+    pub aabb: bevy::render::primitives::Aabb,
+}
 
 pub struct MeshBVHItem {
     pub bvh: Bvh<f32, 3>,

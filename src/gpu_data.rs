@@ -17,7 +17,8 @@ use half::f16;
 
 use crate::packing::{octa_decode, octa_encode};
 use crate::{
-    bind_group_layout_entry, some_binding_or_return_none, DynamicTLASData, StaticTLASData, BLAS,
+    bind_group_layout_entry, some_binding_or_return_none, DynamicTLASData, StaticTLASData,
+    TraceMesh, BLAS,
 };
 
 pub struct GPUDataPlugin;
@@ -224,7 +225,7 @@ pub fn extract_gpu_data(
     dynamic_tlas: Extract<Res<DynamicTLASData>>,
     mut instance_mesh_data: Local<Vec<MeshData>>,
     mut mesh_data_reverse_map: Local<HashMap<Handle<Mesh>, usize>>,
-    mesh_entities: Extract<Query<(Entity, &Handle<Mesh>, &GlobalTransform)>>,
+    mesh_entities: Extract<Query<(Entity, &TraceMesh, &GlobalTransform)>>,
     mut gpu_buffers: ResMut<GPUBuffers>,
     mut static_instance_order: ResMut<StaticInstanceOrder>,
     mut dynamic_instance_order: ResMut<DynamicInstanceOrder>,
@@ -241,6 +242,7 @@ pub fn extract_gpu_data(
         *mesh_data_reverse_map = HashMap::new();
         for (mesh_h, mesh_blas) in blas.0.iter() {
             let mesh = meshes.get(mesh_h).unwrap();
+
             let blas_start = blas_data.len();
             let index_start = index_data.len();
             let vertex_start = vertex_data.len();
@@ -281,6 +283,7 @@ pub fn extract_gpu_data(
             });
             mesh_data_reverse_map.insert(mesh_h.clone(), mesh_data_idx);
         }
+
         gpu_buffers.vertex_data_buffer =
             new_storage_buffer(vertex_data, "vertex_data", &render_device, &render_queue);
         gpu_buffers.index_data_buffer =
@@ -313,8 +316,8 @@ pub fn extract_gpu_data(
         let mut gpu_mesh_instance_data = Vec::new();
         static_instance_order.0 = Vec::new();
         for item in &static_tlas.0.aabbs {
-            let (entity, mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
-            if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+            let (entity, tmesh, trans) = mesh_entities.get(item.entity).unwrap();
+            if let Some(mesh_idx) = mesh_data_reverse_map.get(&tmesh.mesh_h) {
                 static_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
                 let local_to_world = trans.compute_matrix();
@@ -327,7 +330,7 @@ pub fn extract_gpu_data(
         }
         gpu_buffers.static_mesh_instance_data_buffer = new_storage_buffer(
             gpu_mesh_instance_data,
-            "gpu_mesh_instance_data",
+            "static_mesh_instance_data_buffer",
             &render_device,
             &render_queue,
         );
@@ -336,8 +339,8 @@ pub fn extract_gpu_data(
         let mut gpu_mesh_instance_data = Vec::new();
         dynamic_instance_order.0 = Vec::new();
         for item in &dynamic_tlas.0.aabbs {
-            let (entity, mesh_h, trans) = mesh_entities.get(item.entity).unwrap();
-            if let Some(mesh_idx) = mesh_data_reverse_map.get(mesh_h) {
+            let (entity, tmesh, trans) = mesh_entities.get(item.entity).unwrap();
+            if let Some(mesh_idx) = mesh_data_reverse_map.get(&tmesh.mesh_h) {
                 dynamic_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
                 let local_to_world = trans.compute_matrix();
@@ -350,7 +353,7 @@ pub fn extract_gpu_data(
         }
         gpu_buffers.dynamic_mesh_instance_data_buffer = new_storage_buffer(
             gpu_mesh_instance_data,
-            "gpu_mesh_instance_data",
+            "dynamic_mesh_instance_data_buffer",
             &render_device,
             &render_queue,
         );

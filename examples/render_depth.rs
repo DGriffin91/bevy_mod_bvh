@@ -17,7 +17,8 @@ use bevy::{
 };
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_bvh::{
-    trace::trace_ray, BVHPlugin, DynamicTLAS, DynamicTLASData, StaticTLAS, StaticTLASData, BLAS,
+    trace::trace_ray, BVHPlugin, DynamicTLAS, DynamicTLASData, StaticTLAS, StaticTLASData,
+    TraceMesh, BLAS,
 };
 
 #[derive(Component)]
@@ -86,7 +87,7 @@ fn copy_vec_vec4_to_image(image: &mut Image, data: &[Vec4]) {
 }
 
 pub fn camera_trace_depth(
-    entity_bvh: Query<(Entity, &GlobalTransform, &Handle<Mesh>)>,
+    entity_bvh: Query<(Entity, &GlobalTransform, &TraceMesh)>,
     mut camera: Query<(&GlobalTransform, &Projection, &mut TestTrace)>,
     mut images: ResMut<Assets<Image>>,
     (static_tlas, dynamic_tlas): (Res<StaticTLASData>, Res<DynamicTLASData>),

@@ -1,15 +1,22 @@
-use std::time::Duration;
+use std::{f32::consts::PI, time::Duration};
 
 use bevy::{
     asset::ChangeWatcher,
-    core_pipeline::core_3d,
-    diagnostic::FrameTimeDiagnosticsPlugin,
+    core_pipeline::{
+        core_3d::{
+            self,
+            graph::node::{BLOOM, END_MAIN_PASS, UPSCALING},
+        },
+        upscaling::UpscalingNode,
+    },
+    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     render::{
+        camera::CameraRenderGraph,
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
-        render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext},
+        render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext, ViewNodeRunner},
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
             BindingResource, CachedRenderPipelineId, Operations, PipelineCache,
@@ -28,11 +35,12 @@ use bevy_mod_bvh::{
     pipeline_utils::{
         get_default_pipeline_desc, image_entry, sampler_entry, uniform_entry, view_entry,
     },
-    BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS,
+    BVHPlugin, BVHSet, DynamicTLAS, StaticTLAS, TraceMesh,
 };
 
 fn main() {
     App::new()
+        .insert_resource(Msaa::Off)
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
@@ -53,12 +61,20 @@ fn main() {
             GPUDataPlugin,
             CameraControllerPlugin,
             FrameTimeDiagnosticsPlugin::default(),
+            LogDiagnosticsPlugin::default(),
         ))
         .add_systems(Startup, (setup, load_sponza))
         .add_systems(Update, (cube_rotator, update_settings))
-        .add_systems(Update, set_sponza_tlas.before(BVHSet::BlasTlas))
+        .add_systems(
+            Update,
+            (remove_vis, swap_to_tracemesh, set_sponza_tlas)
+                .chain()
+                .before(BVHSet::BlasTlas),
+        )
         .run();
 }
+
+pub const GRAPH_NAME: &str = "gpu_trace_graph";
 
 struct PostProcessPlugin;
 impl Plugin for PostProcessPlugin {
@@ -72,15 +88,16 @@ impl Plugin for PostProcessPlugin {
             return;
         };
 
+        // Adding the node to both its own graph and the default one for easy switching
         render_app
-            .add_render_graph_node::<RayTraceNode>(core_3d::graph::NAME, RayTraceNode::NAME)
+            .add_render_sub_graph(GRAPH_NAME)
+            .add_render_graph_node::<RayTraceNode>(GRAPH_NAME, RayTraceNode::NAME)
+            .add_render_graph_node::<ViewNodeRunner<UpscalingNode>>(GRAPH_NAME, UPSCALING)
+            .add_render_graph_edges(GRAPH_NAME, &[RayTraceNode::NAME, UPSCALING])
+            .add_render_graph_node::<RayTraceNode>(core_3d::CORE_3D, RayTraceNode::NAME)
             .add_render_graph_edges(
-                core_3d::graph::NAME,
-                &[
-                    core_3d::graph::node::BLOOM,
-                    RayTraceNode::NAME,
-                    core_3d::graph::node::TONEMAPPING,
-                ],
+                core_3d::CORE_3D,
+                &[END_MAIN_PASS, RayTraceNode::NAME, BLOOM],
             );
     }
 
@@ -191,7 +208,6 @@ impl Node for RayTraceNode {
         render_pass.set_render_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[view_uniform_offset.offset]);
         render_pass.draw(0..3, 0..1);
-
         Ok(())
     }
 }
@@ -294,6 +310,7 @@ fn setup(
     // camera
     commands
         .spawn(Camera3dBundle {
+            camera_render_graph: CameraRenderGraph::new(GRAPH_NAME),
             transform: Transform::from_xyz(-10.5, 1.7, -1.0)
                 .looking_at(Vec3::new(0.0, 3.5, 0.0), Vec3::Y),
             ..default()
@@ -303,6 +320,7 @@ fn setup(
             frame: 0,
             frame_time: 0.0,
         });
+    //.insert((DepthPrepass, DeferredPrepass));
 }
 
 fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -318,7 +336,10 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
     //    ),
     //    ..default()
     //});
+    let mut trans = Transform::from_translation(Vec3::new(-7.2, 0.5, 0.0));
+    trans.rotate_y(PI);
     commands.spawn(SceneBundle {
+        transform: trans,
         scene: asset_server.load("scenes/kitchen_gltf_no_window_cover.gltf#Scene0"),
         ..default()
     });
@@ -326,17 +347,41 @@ fn load_sponza(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 fn set_sponza_tlas(
     mut commands: Commands,
-    query: Query<
-        Entity,
-        (
-            With<Handle<Mesh>>,
-            Without<StaticTLAS>,
-            Without<DynamicTLAS>,
-        ),
-    >,
+    query: Query<Entity, (With<TraceMesh>, Without<StaticTLAS>, Without<DynamicTLAS>)>,
 ) {
     for entity in &query {
         commands.entity(entity).insert(StaticTLAS);
+    }
+}
+
+fn swap_to_tracemesh(
+    mut commands: Commands,
+    query: Query<(Entity, &Handle<Mesh>), Without<TraceMesh>>,
+    meshes: Res<Assets<Mesh>>,
+) {
+    for (entity, mesh_h) in &query {
+        let mut ecmd = commands.entity(entity);
+
+        ecmd.insert(TraceMesh {
+            mesh_h: mesh_h.clone(),
+            aabb: meshes.get(mesh_h).unwrap().compute_aabb().unwrap(),
+        });
+        ecmd.remove::<Handle<Mesh>>();
+    }
+}
+
+// Bevy's visibility propagation is currently very slow. bevy_mod_bvh ignores it.
+// If visibility features are needed then manually handle them by removing TraceMesh.
+// If bevy's visibility propagation doesn't improve something better will be implemented here.
+fn remove_vis(
+    mut commands: Commands,
+    query: Query<Entity, Or<(With<Visibility>, With<ComputedVisibility>)>>,
+) {
+    for entity in &query {
+        commands
+            .entity(entity)
+            .remove::<Visibility>()
+            .remove::<ComputedVisibility>();
     }
 }
 
