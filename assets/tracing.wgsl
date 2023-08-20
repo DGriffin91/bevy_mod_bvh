@@ -174,14 +174,12 @@ fn intersects_plane(ray: Ray, planePoint: vec3<f32>, planeNormal: vec3<f32>) -> 
     return dot(planePoint - ray.origin, planeNormal) / denom;
 }
 
-
-
-fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) -> Intersection {
+fn intersects_triangle_old(ray: Ray, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> Intersection {
     var result: Intersection;
     result.distance = F32_MAX;
 
-    let ab = p1 - p2;
-    let ac = p3 - p2;
+    let ab = p1 - p0;
+    let ac = p2 - p0;
 
     let u_vec = cross(ray.direction, ac);
     let det = dot(ab, u_vec);
@@ -192,7 +190,7 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     }
 
     let inv_det = 1.0 / det;
-    let ao = ray.origin - p2;
+    let ao = ray.origin - p0;
     let u = dot(ao, u_vec) * inv_det;
     if u < 0.0 || u > 1.0 {
         return result;
@@ -208,6 +206,35 @@ fn intersects_triangle(ray: Ray, p1: vec3<f32>, p2: vec3<f32>, p3: vec3<f32>) ->
     let distance = dot(ac, v_vec) * inv_det;
     result.distance = select(result.distance, distance, distance > F32_EPSILON);
 
+
+    return result;
+}
+
+// https://cs.uwaterloo.ca/~thachisu/tdf2015.pdf
+// https://madmann91.github.io/2021/04/29/an-introduction-to-bvhs.html
+// Couldn't get w = 1.0f - u - v; w > 0.0 to work. There's a nan or inf I'm guessing.
+fn intersects_triangle(ray: Ray, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> Intersection {
+    var result: Intersection;
+    result.distance = F32_MAX;
+
+    let e1 = p0 - p1;
+    let e2 = p2 - p0;
+    let n = cross(e1, e2);
+    
+    let c = p0 - ray.origin;
+    let r = cross(ray.direction, c);
+    let inv_det = 1.0 / dot(n, ray.direction);
+
+    var uvt = vec3(
+        dot(r, e2), 
+        dot(r, e1),
+        dot(n, c)
+    ) * inv_det;
+
+    if all(uvt > vec3(0.0)) && uvt.x + uvt.y < 1.0 {
+        result.distance = uvt.z;
+        result.uv = uvt.xy;
+    }
 
     return result;
 }
@@ -235,8 +262,7 @@ fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit:
             let p2 = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind2 + instance.vert_data_start]);
             let p3 = gputypes::VertexData_unpack_pos(bindings::vertex_buffer[ind3 + instance.vert_data_start]);
 
-            // vert order is acb?
-            let intr = intersects_triangle(ray, p1, p3, p2);
+            let intr = intersects_triangle(ray, p1, p2, p3);
             if any_hit && intr.distance < F32_MAX {
                 hit.distance = 0.0;
                 return hit;
@@ -355,9 +381,9 @@ fn get_surface_normal(query: SceneQuery) -> vec3<f32> {
     let ind2 = i32(bindings::index_buffer[query.hit.triangle_idx + 1 + mesh_index_start].idx);
     let ind3 = i32(bindings::index_buffer[query.hit.triangle_idx + 2 + mesh_index_start].idx);
     
-    let a = gputypes::VertexData_unpack(bindings::vertex_buffer[ind1 + mesh_pos_start]).normal;
-    let b = gputypes::VertexData_unpack(bindings::vertex_buffer[ind2 + mesh_pos_start]).normal;
-    let c = gputypes::VertexData_unpack(bindings::vertex_buffer[ind3 + mesh_pos_start]).normal;
+    let c = gputypes::VertexData_unpack(bindings::vertex_buffer[ind1 + mesh_pos_start]).normal;
+    let a = gputypes::VertexData_unpack(bindings::vertex_buffer[ind2 + mesh_pos_start]).normal;
+    let b = gputypes::VertexData_unpack(bindings::vertex_buffer[ind3 + mesh_pos_start]).normal;
 
     // Barycentric Coordinates
     let u = query.hit.uv.x;

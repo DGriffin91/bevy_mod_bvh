@@ -76,6 +76,8 @@ struct TLASBVHData {
 }
 
 struct BLASBVHData {
+    // In the leaf nodes the aabbs are unused, could store the verts here. 
+    // (maybe 10bit unorm inside the aabb?)
     aabb_minxy: u32, // f16 min x, y
     aabb_maxxy: u32, // f16 max x, y
     aabb_z: u32,     // f16 min z, max z
