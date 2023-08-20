@@ -174,6 +174,20 @@ fn intersects_plane(ray: Ray, planePoint: vec3<f32>, planeNormal: vec3<f32>) -> 
     return dot(planePoint - ray.origin, planeNormal) / denom;
 }
 
+fn intersects_triangle_cir(ray: Ray, nor_d: vec3<f32>, center: vec3<f32>) -> Intersection {
+    var result: Intersection;
+
+    let n = normalize(nor_d);
+    let d = dot(ray.direction, n);
+    let t = dot(center - ray.origin, n) / d;
+    let intersection = ray.origin + t * ray.direction;
+
+    result.distance = select(F32_MAX, t, distance(intersection, center) < length(nor_d));
+    result.uv = vec2(0.33);
+
+    return result;
+}
+
 fn intersects_triangle_old(ray: Ray, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> Intersection {
     var result: Intersection;
     result.distance = F32_MAX;

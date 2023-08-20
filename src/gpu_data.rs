@@ -374,7 +374,7 @@ impl BLASBVHData {
     ) -> Vec<Self> {
         let mut bvh_data = Vec::new();
         for f in flat_bvh.iter() {
-            let (entry_or_shape_idx, _tri_nor) = if f.entry_index == u32::MAX {
+            let (entry_or_shape_idx, tri_nor, tri_center) = if f.entry_index == u32::MAX {
                 let ind = f.shape_index as usize * 3;
                 let a = vertex_data[vertex_start + index_data[index_start + ind + 0].idx as usize]
                     .unpack()
@@ -391,20 +391,34 @@ impl BLASBVHData {
 
                 let normal = v1.cross(v2).normalize();
 
+                let center = (a + b + c) / 3.0;
+
                 // If the entry_index is negative, then it's a leaf node.
                 // Shape index in this case is the index into the vertex indices
-                (-(f.shape_index as i32 + 1), normal)
+                (
+                    -(f.shape_index as i32 + 1),
+                    normal
+                        * a.distance(center)
+                            .max(b.distance(center))
+                            .max(c.distance(center)),
+                    center,
+                )
             } else {
-                (f.entry_index as i32, Vec3::ZERO)
+                (f.entry_index as i32, Vec3::ZERO, Vec3::ZERO)
             };
 
-            let (aabb_min, aabb_max) = if f32::is_finite(f.aabb.min[0]) {
+            let (mut aabb_min, mut aabb_max) = if f32::is_finite(f.aabb.min[0]) {
                 let aabb_min = vec3(f.aabb.min[0], f.aabb.min[1], f.aabb.min[2]);
                 let aabb_max = vec3(f.aabb.max[0], f.aabb.max[1], f.aabb.max[2]);
                 (aabb_min, aabb_max)
             } else {
                 (Vec3::ZERO, Vec3::ZERO)
             };
+
+            if f.entry_index == u32::MAX {
+                aabb_min = tri_nor;
+                aabb_max = tri_center;
+            }
 
             let mut aabb_minxy = f16::from_f32(aabb_min.x).to_bits() as u32;
             aabb_minxy |= (f16::from_f32(aabb_min.y).to_bits() as u32) << 16;
