@@ -1,7 +1,6 @@
-use std::{f32::consts::PI, time::Duration};
+use std::f32::consts::PI;
 
 use bevy::{
-    asset::ChangeWatcher,
     core_pipeline::{
         core_3d::{
             self,
@@ -10,13 +9,16 @@ use bevy::{
         upscaling::UpscalingNode,
     },
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    ecs::query::QueryItem,
     prelude::*,
     render::{
         camera::CameraRenderGraph,
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
-        render_graph::{Node, NodeRunError, RenderGraphApp, RenderGraphContext, ViewNodeRunner},
+        render_graph::{
+            NodeRunError, RenderGraphApp, RenderGraphContext, ViewNode, ViewNodeRunner,
+        },
         render_resource::{
             BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
             BindingResource, CachedRenderPipelineId, Operations, PipelineCache,
@@ -43,10 +45,7 @@ fn main() {
         .insert_resource(Msaa::Off)
         .add_plugins(
             DefaultPlugins
-                .set(AssetPlugin {
-                    watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
-                    ..default()
-                })
+                .set(AssetPlugin::default().watch_for_changes())
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         present_mode: PresentMode::Immediate,
@@ -63,11 +62,11 @@ fn main() {
             FrameTimeDiagnosticsPlugin::default(),
             LogDiagnosticsPlugin::default(),
         ))
-        .add_systems(Startup, (setup, load_sponza))
+        .add_systems(Startup, (setup, load_sponza, remove_vis))
         .add_systems(Update, (cube_rotator, update_settings))
         .add_systems(
             Update,
-            (remove_vis, swap_to_tracemesh, set_sponza_tlas)
+            (swap_to_tracemesh, set_sponza_tlas)
                 .chain()
                 .before(BVHSet::BlasTlas),
         )
@@ -91,10 +90,13 @@ impl Plugin for PostProcessPlugin {
         // Adding the node to both its own graph and the default one for easy switching
         render_app
             .add_render_sub_graph(GRAPH_NAME)
-            .add_render_graph_node::<RayTraceNode>(GRAPH_NAME, RayTraceNode::NAME)
+            .add_render_graph_node::<ViewNodeRunner<RayTraceNode>>(GRAPH_NAME, RayTraceNode::NAME)
             .add_render_graph_node::<ViewNodeRunner<UpscalingNode>>(GRAPH_NAME, UPSCALING)
             .add_render_graph_edges(GRAPH_NAME, &[RayTraceNode::NAME, UPSCALING])
-            .add_render_graph_node::<RayTraceNode>(core_3d::CORE_3D, RayTraceNode::NAME)
+            .add_render_graph_node::<ViewNodeRunner<RayTraceNode>>(
+                core_3d::CORE_3D,
+                RayTraceNode::NAME,
+            )
             .add_render_graph_edges(
                 core_3d::CORE_3D,
                 &[END_MAIN_PASS, RayTraceNode::NAME, BLOOM],
@@ -110,47 +112,38 @@ impl Plugin for PostProcessPlugin {
     }
 }
 
-struct RayTraceNode {
-    query: QueryState<(&'static ViewUniformOffset, &'static ViewTarget), With<ExtractedView>>,
-}
+#[derive(Default)]
+struct RayTraceNode;
 
 impl RayTraceNode {
     pub const NAME: &str = "post_process";
 }
 
-impl FromWorld for RayTraceNode {
-    fn from_world(world: &mut World) -> Self {
-        Self {
-            query: QueryState::new(world),
-        }
-    }
-}
-
-impl Node for RayTraceNode {
-    fn update(&mut self, world: &mut World) {
-        self.query.update_archetypes(world);
-    }
+impl ViewNode for RayTraceNode {
+    type ViewQuery = (
+        &'static ViewUniformOffset,
+        &'static ViewTarget,
+        &'static ExtractedView,
+    );
 
     fn run(
         &self,
-        graph_context: &mut RenderGraphContext,
+        _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
+        (view_uniform_offset, view_target, _extraced_view): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
-        let view_entity = graph_context.view_entity();
         let view_uniforms: &ViewUniforms = world.resource::<ViewUniforms>();
         let view_uniforms = view_uniforms.uniforms.binding().unwrap();
         let gpu_buffers = world.resource::<GPUBuffers>();
 
-        let Ok((view_uniform_offset, view_target)) = self.query.get_manual(world, view_entity) else {
-            return Ok(());
-        };
-
         let post_process_pipeline = world.resource::<PostProcessPipeline>();
 
         let pipeline_cache = world.resource::<PipelineCache>();
+        //dbg!(pipeline_cache.get_render_pipeline_state(post_process_pipeline.pipeline_id));
 
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(post_process_pipeline.pipeline_id) else {
+        let Some(pipeline) = pipeline_cache.get_render_pipeline(post_process_pipeline.pipeline_id)
+        else {
             return Ok(());
         };
 
@@ -159,8 +152,9 @@ impl Node for RayTraceNode {
             return Ok(());
         };
 
-        let Some(gpu_buffer_bind_group_entries) = gpu_buffers
-                .bind_group_entries([4, 5, 6, 7, 8, 9, 10]) else {
+        let Some(gpu_buffer_bind_group_entries) =
+            gpu_buffers.bind_group_entries([4, 5, 6, 7, 8, 9, 10])
+        else {
             return Ok(());
         };
 
@@ -363,7 +357,7 @@ fn swap_to_tracemesh(
         let mut ecmd = commands.entity(entity);
 
         ecmd.insert(TraceMesh {
-            mesh_h: mesh_h.clone(),
+            mesh_h: mesh_h.clone().into(),
             aabb: meshes.get(mesh_h).unwrap().compute_aabb().unwrap(),
         });
         ecmd.remove::<Handle<Mesh>>();
@@ -375,13 +369,13 @@ fn swap_to_tracemesh(
 // If bevy's visibility propagation doesn't improve something better will be implemented here.
 fn remove_vis(
     mut commands: Commands,
-    query: Query<Entity, Or<(With<Visibility>, With<ComputedVisibility>)>>,
+    query: Query<Entity, Or<(With<Visibility>, With<InheritedVisibility>)>>,
 ) {
     for entity in &query {
         commands
             .entity(entity)
             .remove::<Visibility>()
-            .remove::<ComputedVisibility>();
+            .remove::<InheritedVisibility>();
     }
 }
 

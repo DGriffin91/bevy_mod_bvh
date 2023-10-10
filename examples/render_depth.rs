@@ -1,10 +1,7 @@
-use std::time::Duration;
-
 use bevy::{
-    asset::ChangeWatcher,
     math::{vec3, vec4},
     prelude::*,
-    reflect::{TypePath, TypeUuid},
+    reflect::TypePath,
     render::{
         camera::CameraProjection,
         render_resource::{
@@ -149,8 +146,7 @@ impl Material for CustomMaterial {
 }
 
 // This is the struct that will be passed to your shader
-#[derive(AsBindGroup, Debug, Clone, TypeUuid, TypePath)]
-#[uuid = "717f64fe-6844-4822-8926-e0ed374294c8"]
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct CustomMaterial {
     #[texture(0)]
     #[sampler(1)]
@@ -162,10 +158,7 @@ fn main() {
 
     app.add_plugins(
         DefaultPlugins
-            .set(AssetPlugin {
-                watch_for_changes: ChangeWatcher::with_delay(Duration::from_millis(200)),
-                ..default()
-            })
+            .set(AssetPlugin::default().watch_for_changes())
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     present_mode: PresentMode::AutoVsync,

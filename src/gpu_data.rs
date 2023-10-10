@@ -224,7 +224,7 @@ pub fn extract_gpu_data(
     static_tlas: Extract<Res<StaticTLASData>>,
     dynamic_tlas: Extract<Res<DynamicTLASData>>,
     mut instance_mesh_data: Local<Vec<MeshData>>,
-    mut mesh_data_reverse_map: Local<HashMap<Handle<Mesh>, usize>>,
+    mut mesh_data_reverse_map: Local<HashMap<AssetId<Mesh>, usize>>,
     mesh_entities: Extract<Query<(Entity, &TraceMesh, &GlobalTransform)>>,
     mut gpu_buffers: ResMut<GPUBuffers>,
     mut static_instance_order: ResMut<StaticInstanceOrder>,
@@ -241,7 +241,7 @@ pub fn extract_gpu_data(
         *instance_mesh_data = Vec::new();
         *mesh_data_reverse_map = HashMap::new();
         for (mesh_h, mesh_blas) in blas.0.iter() {
-            let mesh = if let Some(mesh) = meshes.get(mesh_h) {
+            let mesh = if let Some(mesh) = meshes.get(*mesh_h) {
                 mesh
             } else {
                 continue;
@@ -321,7 +321,9 @@ pub fn extract_gpu_data(
         static_instance_order.0 = Vec::new();
         for item in &static_tlas.0.aabbs {
             let (entity, tmesh, trans) = mesh_entities.get(item.entity).unwrap();
-            if let Some(mesh_idx) = mesh_data_reverse_map.get(&tmesh.mesh_h) {
+            if let Some(mesh_idx) =
+                mesh_data_reverse_map.get(&Into::<AssetId<Mesh>>::into(tmesh.mesh_h))
+            {
                 static_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
                 let local_to_world = trans.compute_matrix();
@@ -344,7 +346,9 @@ pub fn extract_gpu_data(
         dynamic_instance_order.0 = Vec::new();
         for item in &dynamic_tlas.0.aabbs {
             let (entity, tmesh, trans) = mesh_entities.get(item.entity).unwrap();
-            if let Some(mesh_idx) = mesh_data_reverse_map.get(&tmesh.mesh_h) {
+            if let Some(mesh_idx) =
+                mesh_data_reverse_map.get(&Into::<AssetId<Mesh>>::into(tmesh.mesh_h))
+            {
                 dynamic_instance_order.0.push(entity.clone());
                 let mesh_data = instance_mesh_data[*mesh_idx];
                 let local_to_world = trans.compute_matrix();

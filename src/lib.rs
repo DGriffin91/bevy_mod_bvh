@@ -37,22 +37,36 @@ impl Plugin for BVHPlugin {
 }
 
 pub fn build_blas(
-    mut mesh_events: EventReader<AssetEvent<Mesh>>,
+    //mut mesh_events: EventReader<AssetEvent<Mesh>>,
     meshes: Res<Assets<Mesh>>,
     mut blas: ResMut<BLAS>,
 ) {
-    for event in mesh_events.iter() {
-        match event {
-            AssetEvent::Created { handle } | AssetEvent::Modified { handle } => {
-                if let Some(bvh) = MeshBVHItem::new(meshes.get(handle).unwrap()) {
-                    blas.0.insert(handle.clone(), bvh);
-                }
-            }
-            AssetEvent::Removed { handle } => {
-                let _ = blas.0.remove(handle);
+    for (id, mesh) in meshes.iter() {
+        if !blas.0.contains_key(&id) {
+            if let Some(bvh) = MeshBVHItem::new(mesh) {
+                blas.0.insert(id.clone(), bvh);
             }
         }
     }
+    // TODO wasn't seeing all meshes with this mesh_events impl (similar worked before assets v2)
+    //for event in mesh_events.read() {
+    //    match event {
+    //        AssetEvent::LoadedWithDependencies { id }
+    //        | AssetEvent::Added { id }
+    //        | AssetEvent::Modified { id } => {
+    //            let Some(mesh) = meshes.get(*id) else {
+    //                continue;
+    //            };
+    //            if let Some(bvh) = MeshBVHItem::new(mesh) {
+    //                blas.0.insert(id.clone(), bvh);
+    //            }
+    //        }
+    //        AssetEvent::Removed { id } => {
+    //            let _ = blas.0.remove(id);
+    //        }
+    //        _ => (),
+    //    }
+    //}
 }
 
 pub fn check_tlas_need_update(
@@ -126,14 +140,14 @@ pub fn update_tlas(
 
 // Bottom-Level Acceleration Structure
 #[derive(Default, Resource)]
-pub struct BLAS(pub HashMap<Handle<Mesh>, MeshBVHItem>);
+pub struct BLAS(pub HashMap<AssetId<Mesh>, MeshBVHItem>);
 
 // The mesh to be used for tracing.
 // This is to allow the user to specify a different mesh for tracing or to allow the user to remove
 // the Handle<Mesh> component from the entity to keep bevy from trying to use it in the render.
 #[derive(Component, Clone)]
 pub struct TraceMesh {
-    pub mesh_h: Handle<Mesh>,
+    pub mesh_h: AssetId<Mesh>,
     pub aabb: bevy::render::primitives::Aabb,
 }
 
