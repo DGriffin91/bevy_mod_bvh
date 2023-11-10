@@ -20,10 +20,9 @@ use bevy::{
             NodeRunError, RenderGraphApp, RenderGraphContext, ViewNode, ViewNodeRunner,
         },
         render_resource::{
-            BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-            BindingResource, CachedRenderPipelineId, Operations, PipelineCache,
-            RenderPassColorAttachment, RenderPassDescriptor, Sampler, SamplerDescriptor,
-            ShaderType, TextureViewDimension,
+            BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindingResource,
+            CachedRenderPipelineId, Operations, PipelineCache, RenderPassColorAttachment,
+            RenderPassDescriptor, Sampler, SamplerDescriptor, ShaderType, TextureViewDimension,
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
@@ -43,17 +42,13 @@ use bevy_mod_bvh::{
 fn main() {
     App::new()
         .insert_resource(Msaa::Off)
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin::default().watch_for_changes())
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        present_mode: PresentMode::Immediate,
-                        ..default()
-                    }),
-                    ..default()
-                }),
-        )
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                present_mode: PresentMode::Immediate,
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins((
             PostProcessPlugin,
             BVHPlugin,
@@ -181,13 +176,11 @@ impl ViewNode for RayTraceNode {
 
         entries.append(&mut gpu_buffer_bind_group_entries.to_vec());
 
-        let bind_group = render_context
-            .render_device()
-            .create_bind_group(&BindGroupDescriptor {
-                label: Some("post_process_bind_group"),
-                layout: &post_process_pipeline.layout,
-                entries: &entries,
-            });
+        let bind_group = render_context.render_device().create_bind_group(
+            Some("post_process_bind_group"),
+            &post_process_pipeline.layout,
+            &entries,
+        );
 
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("post_process_pass"),

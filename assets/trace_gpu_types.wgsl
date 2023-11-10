@@ -3,16 +3,16 @@ fn octa_wrap(v: vec2<f32>) -> vec2<f32> {
     return (1.0 - abs(v.yx)) * sign(v.xy);
 }
 
-fn octa_encode(n: vec3<f32>) -> vec2<f32> {
-    var n = n / (abs(n.x) + abs(n.y) + abs(n.z));
+fn octa_encode(n_in: vec3<f32>) -> vec2<f32> {
+    var n = n_in / (abs(n_in.x) + abs(n_in.y) + abs(n_in.z));
     if (n.z < 0.0) {
         n = vec3(octa_wrap(n.xy), n.z);
     }
     return n.xy * 0.5 + 0.5;
 }
 
-fn octa_decode(f: vec2<f32>) -> vec3<f32> {
-    var f = f * 2.0 - 1.0;
+fn octa_decode(f_in: vec2<f32>) -> vec3<f32> {
+    var f = f_in * 2.0 - 1.0;
     var n = vec3( f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
     if (n.z < 0.0) {
         n = vec3(octa_wrap(n.xy), n.z);

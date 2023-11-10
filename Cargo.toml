@@ -6,20 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { git = "https://github.com/DGriffin91/bevy", branch = "deferred", features = [
-    "filesystem_watcher",
-] }
+bevy = { version = "0.12", features = ["file_watcher"] }
 bvh = { git = "https://github.com/svenstaro/bvh", rev = "7482cafcbad06ce8b5085a54d55e447ba2f4ad7d" }
 rand = "0.8"
 rand_distr = "0.4"
-bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools", branch = "bevy-main" }
+bevy_mod_mesh_tools = { git = "https://github.com/DGriffin91/bevy_mod_mesh_tools", branch = "main" }
 bytemuck = "1.7"
 num-integer = "0.1"
 nalgebra = { version = "0.32.2", features = ["default", "serde-serialize"] }
 half = "2.3"
 
 [dev-dependencies]
-bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera", branch = "bevy-main" }
+bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera", branch = "main" }
 
 # Enable optimization in debug mode
 [profile.dev]
@@ -29,6 +27,3 @@ debug = 1
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
-
-[patch."https://github.com/bevyengine/bevy"]
-bevy = { git = "https://github.com/DGriffin91/bevy", branch = "deferred" }

@@ -253,7 +253,7 @@ fn intersects_triangle(ray: Ray, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) ->
     return result;
 }
 
-fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit: bool,
+fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist_in: f32, any_hit: bool,
 #ifdef RT_STATS
     stats: ptr<function, Stats>
 #endif
@@ -263,7 +263,7 @@ fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit:
     var hit: Hit;
     hit.distance = F32_MAX;
     var aabb_inter = vec2(0.0);
-    var min_dist = min(min_dist, F32_MAX);
+    var min_dist = min(min_dist_in, F32_MAX);
     while (next_idx < instance.blas_count) {
         let blas = bindings::blas_buffer[next_idx + instance.blas_start];
         if blas.entry_or_shape_idx < 0 {
@@ -322,8 +322,8 @@ fn traverse_blas(instance: gputypes::MeshData, ray: Ray, min_dist: f32, any_hit:
     return hit;
 }
 
-fn scene_query(ray: Ray, max_ray_dist: f32) -> SceneQuery {
-    var max_ray_dist = clamp(max_ray_dist, 0.0, F32_MAX);
+fn scene_query(ray: Ray, max_ray_dist_in: f32) -> SceneQuery {
+    var max_ray_dist = clamp(max_ray_dist_in, 0.0, F32_MAX);
 #ifdef RT_STATS
     var stats = stats_new();
 #endif
@@ -353,8 +353,8 @@ fn scene_query(ray: Ray, max_ray_dist: f32) -> SceneQuery {
     return query;
 }
 
-fn scene_query_any_hit(ray: Ray, max_ray_dist: f32) -> bool {
-    var max_ray_dist = clamp(max_ray_dist, 0.0, F32_MAX);
+fn scene_query_any_hit(ray: Ray, max_ray_dist_in: f32) -> bool {
+    var max_ray_dist = clamp(max_ray_dist_in, 0.0, F32_MAX);
 #ifdef RT_STATS
     var stats = stats_new();
 #endif
@@ -456,7 +456,7 @@ fn compute_tri_normal(query: SceneQuery) -> vec3<f32> {
 
 // IF ONE OF THESE FUNCTIONS ARE UPDATED, THEY ALL SHOULD BE
 
-fn static_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
+fn static_traverse_tlas(ray: Ray, min_dist_in: f32, any_hit: bool,
 #ifdef RT_STATS
     stats: ptr<function, Stats>
 #endif
@@ -465,7 +465,7 @@ fn static_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
     var temp_return = vec4(0.0);
     var hit: Hit;
     hit.distance = F32_MAX;
-    var min_dist = min_dist; //min(min_dist, F32_MAX);
+    var min_dist = min_dist_in; //min(min_dist, F32_MAX);
     while (next_idx < i32(arrayLength(&bindings::static_tlas_buffer))) {
         let tlas = bindings::static_tlas_buffer[next_idx];
         if tlas.entry_or_shape_idx < 0 {
@@ -535,7 +535,7 @@ fn static_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
     return hit;
 }
 
-fn dynamic_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
+fn dynamic_traverse_tlas(ray: Ray, min_dist_in: f32, any_hit: bool,
 #ifdef RT_STATS
     stats: ptr<function, Stats>
 #endif
@@ -544,7 +544,7 @@ fn dynamic_traverse_tlas(ray: Ray, min_dist: f32, any_hit: bool,
     var temp_return = vec4(0.0);
     var hit: Hit;
     hit.distance = F32_MAX;
-    var min_dist = min_dist; //min(min_dist, F32_MAX);
+    var min_dist = min_dist_in; //min(min_dist, F32_MAX);
     while (next_idx < i32(arrayLength(&bindings::dynamic_tlas_buffer))) {
         let tlas = bindings::dynamic_tlas_buffer[next_idx];
         if tlas.entry_or_shape_idx < 0 {

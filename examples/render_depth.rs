@@ -49,7 +49,7 @@ impl TestTrace {
                 usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
                 view_formats: &[],
             },
-            sampler_descriptor: ImageSampler::nearest(),
+            sampler: ImageSampler::nearest(),
             texture_view_descriptor: None,
         };
 
@@ -156,17 +156,13 @@ pub struct CustomMaterial {
 fn main() {
     let mut app = App::new();
 
-    app.add_plugins(
-        DefaultPlugins
-            .set(AssetPlugin::default().watch_for_changes())
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    present_mode: PresentMode::AutoVsync,
-                    ..default()
-                }),
-                ..default()
-            }),
-    )
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            present_mode: PresentMode::AutoVsync,
+            ..default()
+        }),
+        ..default()
+    }))
     .add_systems(Startup, setup)
     .add_plugins((
         BVHPlugin,
